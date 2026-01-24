@@ -92,7 +92,7 @@ notion-ai-assistant/
 ### Prerequisites
 
 - Python 3.10+
-- A running [FastMCP Notion server](https://github.com/your-repo/kas-fastmcp)
+- A running [FastMCP Notion server](https://github.com/kascoded/kas-fastmcp)
 - OpenAI API key
 - (Optional) Telegram bot token
 
@@ -100,7 +100,7 @@ notion-ai-assistant/
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-repo/notion-ai-assistant
+git clone https://github.com/kascoded/notion-ai-assistant
 cd notion-ai-assistant
 
 # Install with uv (recommended)
@@ -475,7 +475,7 @@ MIT License — See [LICENSE](LICENSE)
 
 ## Related Projects
 
-- [kas-fastmcp](https://github.com/your-repo/kas-fastmcp) — FastMCP Notion server
+- [kas-fastmcp](https://github.com/kascoded/kas-fastmcp) — FastMCP Notion server
 - [FastMCP](https://github.com/jlowin/fastmcp) — FastMCP framework
 - [LangGraph](https://github.com/langchain-ai/langgraph) — Agent orchestration
 
