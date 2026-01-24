@@ -7,6 +7,8 @@ and routes them through the NotionAssistant agent.
 Environment Variables:
     TELEGRAM_BOT_TOKEN: Bot token from @BotFather
     TELEGRAM_ALLOWED_USERS: Comma-separated list of allowed user IDs (optional)
+    WEBHOOK_URL: The public URL of the application (for webhooks)
+    PORT: The port to listen on (for webhooks, provided by Railway)
 
 Usage:
     # Run directly
@@ -14,7 +16,7 @@ Usage:
     
     # Or import and run
     from src.notion_assistant.interfaces.telegram_bot import run_bot
-    asyncio.run(run_bot())
+    run_bot()
 """
 import os
 import asyncio
@@ -127,6 +129,10 @@ class TelegramNotionBot:
     async def _ensure_initialized(self):
         """Ensure the assistant is initialized."""
         if not self._initialized:
+            # In a webhook environment, initialization might need to be handled differently
+            # For now, we assume it's quick enough to happen on the first request.
+            # A more robust solution might involve a startup task.
+            logger.info("Performing first-time initialization of assistant...")
             await self.assistant.initialize()
             self._initialized = True
     
@@ -134,20 +140,10 @@ class TelegramNotionBot:
     # Command Handlers
     # ========================================
     
+    @authorized
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /start command."""
         user = update.effective_user
-        user_id = user.id
-        
-        if not self._check_user(user_id):
-            await update.message.reply_text(
-                f"⛔ Sorry, you're not authorized to use this bot.\n\n"
-                f"Your user ID: `{user_id}`\n\n"
-                "Ask the admin to add your ID to the allowlist.",
-                parse_mode="Markdown"
-            )
-            return
-        
         await self._ensure_initialized()
         
         # Get available databases
@@ -172,11 +168,9 @@ class TelegramNotionBot:
             parse_mode="Markdown"
         )
     
+    @authorized
     async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /help command."""
-        if not self._check_user(update.effective_user.id):
-            return
-        
         await update.message.reply_text(
             "📚 **Notion Assistant Help**\n\n"
             "Just send me natural language messages describing what you want to do. "
@@ -194,12 +188,10 @@ class TelegramNotionBot:
             "/refresh - Refresh database schemas",
             parse_mode="Markdown"
         )
-    
+
+    @authorized
     async def databases_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /databases command."""
-        if not self._check_user(update.effective_user.id):
-            return
-        
         await self._ensure_initialized()
         
         databases = self.assistant.available_databases
@@ -212,28 +204,25 @@ class TelegramNotionBot:
             f"📊 **Available Databases ({len(databases)})**\n\n{db_list}",
             parse_mode="Markdown"
         )
-    
+
+    @authorized
     async def status_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /status command."""
-        if not self._check_user(update.effective_user.id):
-            return
-        
         status_parts = [
             "🔧 **System Status**\n",
             f"• Assistant initialized: {'✅' if self._initialized else '❌'}",
-            f"• Databases loaded: {len(self.assistant.available_databases) if self._initialized else 0}",
         ]
-        
+        if self._initialized:
+             status_parts.append(f"• Databases loaded: {len(self.assistant.available_databases)}")
+
         await update.message.reply_text(
             "\n".join(status_parts),
             parse_mode="Markdown"
         )
-    
+
+    @authorized
     async def refresh_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /refresh command to refresh schemas."""
-        if not self._check_user(update.effective_user.id):
-            return
-        
         await update.message.reply_text("🔄 Refreshing database schemas...")
         
         try:
@@ -250,31 +239,22 @@ class TelegramNotionBot:
     # Message Handler
     # ========================================
     
+    @authorized
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle natural language messages."""
-        user_id = update.effective_user.id
-        
-        if not self._check_user(user_id):
-            return
-        
         user_input = update.message.text.strip()
         if not user_input:
             return
         
-        logger.info(f"Processing message from {user_id}: {user_input[:50]}...")
+        logger.info(f"Processing message from {update.effective_user.id}: {user_input[:50]}...")
         
-        # Send typing indicator
         await update.message.chat.send_action("typing")
         
         try:
             await self._ensure_initialized()
-            
-            # Process through assistant (this internally handles parsing, routing, execution)
             response = await self.assistant.process(user_input)
             
-            # Send response (split if too long)
             if len(response) > 4000:
-                # Split into chunks for Telegram's message limit
                 chunks = [response[i:i+4000] for i in range(0, len(response), 4000)]
                 for chunk in chunks:
                     await update.message.reply_text(chunk)
@@ -309,58 +289,67 @@ class TelegramNotionBot:
         """Build the Telegram application with handlers."""
         app = Application.builder().token(self.token).build()
         
-        # Command handlers
         app.add_handler(CommandHandler("start", self.start_command))
         app.add_handler(CommandHandler("help", self.help_command))
         app.add_handler(CommandHandler("databases", self.databases_command))
         app.add_handler(CommandHandler("status", self.status_command))
         app.add_handler(CommandHandler("refresh", self.refresh_command))
-        
-        # Message handler for natural language
-        app.add_handler(MessageHandler(
-            filters.TEXT & ~filters.COMMAND,
-            self.handle_message
-        ))
-        
-        # Error handler
+        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_message))
         app.add_error_handler(self.error_handler)
         
         return app
     
-    def run(self):
-        """Run the bot (blocking)."""
-        logger.info("Starting Telegram bot...")
+    def run_polling(self):
+        """Run the bot with polling (for local development)."""
+        logger.info("Starting bot with polling...")
         app = self.build_application()
         app.run_polling(allowed_updates=Update.ALL_TYPES)
+        logger.info("Bot stopped.")
 
+    def run_webhook(self):
+        """Run the bot with a webhook (for production)."""
+        port_str = os.getenv("PORT")
+        webhook_url = os.getenv("WEBHOOK_URL")
+
+        if not port_str:
+            raise ValueError("PORT environment variable not set.")
+        if not webhook_url:
+            raise ValueError("WEBHOOK_URL environment variable not set.")
+        
+        port = int(port_str)
+        
+        logger.info(f"Starting bot with webhook on port {port}...")
+        app = self.build_application()
+
+        # Using the bot token as the secret URL path is a common practice
+        url_path = self.token
+
+        app.run_webhook(
+            listen="0.0.0.0",
+            port=port,
+            url_path=url_path,
+            webhook_url=f"{webhook_url}/{url_path}"
+        )
+        logger.info("Bot started successfully with webhook.")
 
 # ========================================
 # Standalone Functions
 # ========================================
 
-async def run_bot_async():
-    """Run the bot asynchronously."""
-    bot = TelegramNotionBot()
-    app = bot.build_application()
-    
-    async with app:
-        await app.start()
-        logger.info("Bot started. Press Ctrl+C to stop.")
-        
-        # Keep running until interrupted
-        stop_event = asyncio.Event()
-        try:
-            await stop_event.wait()
-        except asyncio.CancelledError:
-            pass
-        finally:
-            await app.stop()
-
-
 def run_bot():
-    """Run the bot (convenience function)."""
+    """
+    Run the bot.
+    Determines whether to use polling or webhook based on environment.
+    """
     bot = TelegramNotionBot()
-    bot.run()
+    
+    # Use webhook if PORT and WEBHOOK_URL are set (like on Railway)
+    if os.getenv("PORT") and os.getenv("WEBHOOK_URL"):
+        bot.run_webhook()
+    else:
+        # Fallback to polling for local development
+        logger.warning("PORT/WEBHOOK_URL not set, falling back to polling.")
+        bot.run_polling()
 
 
 # ========================================
