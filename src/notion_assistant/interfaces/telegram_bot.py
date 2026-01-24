@@ -133,14 +133,17 @@ class TelegramNotionBot:
         if len(self.assistant.available_databases) > 5:
             db_list += f" (+{len(self.assistant.available_databases) - 5} more)"
         
+        controls_count = len(self.assistant.controls_loader.controls) if self.assistant.controls_loader else 0
+        
         await update.message.reply_text(
             f"👋 Hi {user.first_name}!\n\n"
             "I'm your Notion Assistant. Send me natural language messages to manage your Notion workspace.\n\n"
-            f"**Available databases:** `{db_list}`\n\n"
+            f"**Databases:** `{db_list}`\n"
+            f"**AI Controls:** {controls_count} active\n\n"
             "**Examples:**\n"
             "• Create a note about FastMCP with tags python, mcp\n"
-            "• Search for notes about machine learning\n"
-            "• Ate breakfast, did 30 min cardio, finished task\n\n"
+            "• Ate breakfast, did 30 min cardio, finished task\n"
+            "• Search for notes about machine learning\n\n"
             "Use /help to see all commands.",
             parse_mode="Markdown"
         )
@@ -160,7 +163,10 @@ class TelegramNotionBot:
             "/help - This help message\n"
             "/databases - List available databases\n"
             "/status - Check system status\n"
-            "/refresh - Refresh database schemas",
+            "/refresh - Reload everything (slow)\n"
+            "/refresh\_controls - Reload AI controls only (fast)\n"
+            "/refresh\_schemas - Reload database schemas only\n\n"
+            "_Tip: Edit AI controls in Notion, then /refresh\_controls!_",
             parse_mode="Markdown"
         )
 
@@ -183,17 +189,59 @@ class TelegramNotionBot:
             f"• Assistant initialized: {'✅' if self._initialized else '❌'}",
         ]
         if self._initialized:
-             status_parts.append(f"• Databases loaded: {len(self.assistant.available_databases)}")
+            status_parts.append(f"• Databases loaded: {len(self.assistant.available_databases)}")
+            if self.assistant.controls_loader:
+                status_parts.append(f"• AI Controls loaded: {len(self.assistant.controls_loader.controls)}")
         await update.message.reply_text("\n".join(status_parts), parse_mode="Markdown")
 
     @_require_authorization
     async def refresh_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle /refresh command to refresh schemas."""
-        await update.message.reply_text("🔄 Refreshing database schemas...")
+        """Handle /refresh command to refresh both schemas and controls."""
+        await update.message.reply_text("🔄 Refreshing everything... (this may take a moment)")
+        try:
+            await self.assistant.refresh_all()
+            
+            db_count = len(self.assistant.available_databases)
+            controls_count = len(self.assistant.controls_loader.controls) if self.assistant.controls_loader else 0
+            
+            await update.message.reply_text(
+                f"✅ Refreshed!\n\n"
+                f"• Databases: {db_count}\n"
+                f"• AI Controls: {controls_count}"
+            )
+        except Exception as e:
+            logger.error(f"Failed to refresh: {e}")
+            await update.message.reply_text(f"❌ Failed to refresh: {e}")
+
+    @_require_authorization
+    async def refresh_controls_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /refresh_controls command to refresh AI controls only."""
+        await update.message.reply_text("🔄 Refreshing AI controls...")
+        try:
+            await self.assistant.refresh_controls()
+            
+            controls_count = len(self.assistant.controls_loader.controls) if self.assistant.controls_loader else 0
+            
+            await update.message.reply_text(
+                f"✅ Controls refreshed!\n\n"
+                f"• AI Controls: {controls_count}"
+            )
+        except Exception as e:
+            logger.error(f"Failed to refresh controls: {e}")
+            await update.message.reply_text(f"❌ Failed to refresh: {e}")
+
+    @_require_authorization
+    async def refresh_schemas_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /refresh_schemas command to refresh database schemas."""
+        await update.message.reply_text("🔄 Refreshing database schemas... (this may take a moment)")
         try:
             await self.assistant.refresh_schemas()
+            
+            db_count = len(self.assistant.available_databases)
+            
             await update.message.reply_text(
-                f"✅ Schemas refreshed! Loaded {len(self.assistant.available_databases)} databases."
+                f"✅ Schemas refreshed!\n\n"
+                f"• Databases: {db_count}"
             )
         except Exception as e:
             logger.error(f"Failed to refresh schemas: {e}")
@@ -247,6 +295,8 @@ class TelegramNotionBot:
         app.add_handler(CommandHandler("databases", self.databases_command))
         app.add_handler(CommandHandler("status", self.status_command))
         app.add_handler(CommandHandler("refresh", self.refresh_command))
+        app.add_handler(CommandHandler("refresh_controls", self.refresh_controls_command))
+        app.add_handler(CommandHandler("refresh_schemas", self.refresh_schemas_command))
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_message))
         app.add_error_handler(self.error_handler)
         
