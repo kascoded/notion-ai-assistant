@@ -2,7 +2,7 @@
 name = "notion-ai-assistant"
 version = "0.3.0"
 description = "Natural language interface to Notion via LangGraph and FastMCP"
-requires-python = ">=3.10"
+requires-python = ">=3.13"
 authors = [
     { name = "Miras Kasymkhan", email = "miras@kascurated.com" }
 ]
