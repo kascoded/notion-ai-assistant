@@ -8,18 +8,26 @@ agent behavior - just edit Notion, no redeploy needed.
 Architecture:
     Notion ai_controls DB → ControlsLoader → System Prompt Injection → Parser
 
+Hierarchy System:
+    - Global controls (no target_database) → ALWAYS included
+    - Database-specific controls → Only included when that database is detected
+    
+    Detection happens via lightweight keyword matching before the LLM call,
+    reducing prompt size and improving relevance.
+
 Usage:
     loader = ControlsLoader()
     await loader.initialize(mcp_client)
     
-    # Get all active controls formatted for injection
-    prompt_section = await loader.get_controls_prompt()
+    # Get controls for specific input (uses keyword detection)
+    prompt_section = loader.format_for_input("ate eggs, did workout")
     
-    # Get controls filtered by type
-    routing_rules = await loader.get_controls_by_type("routing_logic")
+    # Or get all controls (old behavior)
+    prompt_section = loader.format_for_prompt()
 """
 import time
-from typing import Dict, Any, List, Optional
+import re
+from typing import Dict, Any, List, Optional, Set
 from dataclasses import dataclass, field
 from enum import Enum
 
@@ -36,6 +44,105 @@ class ControlType(str, Enum):
     PROMPT_TEMPLATE = "prompt_template"
 
 
+# ========================================
+# Keyword Detection for Database Routing
+# ========================================
+
+# Maps keywords/phrases to database names
+# Used for lightweight pre-detection before LLM call
+DATABASE_KEYWORDS: Dict[str, List[str]] = {
+    "zettelkasten": [
+        "note", "notes", "idea", "ideas", "thought", "thoughts", 
+        "learning", "learnings", "research", "concept", "concepts",
+        "insight", "insights", "knowledge", "remember", "capture",
+        "fleeting", "permanent note", "quick capture"
+    ],
+    "habit_tracker": [
+        "habit", "habits", "streak", "daily", "routine",
+        "workout", "worked out", "exercised", "exercise",
+        "read", "reading", "meditate", "meditated", "meditation",
+        "journal", "journaled", "journaling", "stretch", "stretched",
+        "draw", "drawing", "drew", "sleep", "slept", "woke"
+    ],
+    "project_management": [
+        "task", "tasks", "project", "projects", "deadline", "deadlines",
+        "to-do", "todo", "action item", "deliverable", "deliverables",
+        "milestone", "due", "finish", "finished", "complete", "completed",
+        "youtube", "video", "reel", "blog post", "article"
+    ],
+    "calorie_tracker": [
+        "ate", "eat", "eating", "food", "foods", "meal", "meals",
+        "breakfast", "lunch", "dinner", "snack", "snacks",
+        "calories", "calorie", "protein", "carbs", "carbohydrates",
+        "fats", "fat", "nutrition", "macro", "macros"
+    ],
+    "expense_tracker": [
+        "spent", "spend", "spending", "bought", "buy", "buying",
+        "paid", "pay", "payment", "cost", "costs", "price",
+        "expense", "expenses", "subscription", "subscriptions",
+        "dollar", "dollars", "$", "money"
+    ],
+    "blog_content": [
+        "blog", "post", "article", "publish", "publishing",
+        "draft", "drafts", "writing", "write", "written",
+        "kas.blog", "content"
+    ],
+    "workout_schedule": [
+        "workout plan", "gym", "training", "exercise plan",
+        "leg day", "push day", "pull day", "cardio"
+    ],
+    "recipe_collection": [
+        "recipe", "recipes", "cook", "cooking", "cooked",
+        "ingredients", "how to make"
+    ],
+    "reading_list": [
+        "book", "books", "reading list", "want to read",
+        "audiobook", "author"
+    ],
+    "media_library": [
+        "movie", "movies", "show", "shows", "tv", "watch", "watched",
+        "watching", "podcast", "podcasts", "listen", "listened"
+    ],
+}
+
+
+def detect_databases(text: str) -> Set[str]:
+    """
+    Detect which databases might be relevant based on keywords in the input.
+    
+    This is a lightweight pre-filter that runs BEFORE the LLM call.
+    It's intentionally broad - false positives are fine, false negatives are not.
+    
+    Args:
+        text: User input text
+    
+    Returns:
+        Set of database names that might be relevant
+    """
+    text_lower = text.lower()
+    detected = set()
+    
+    for database, keywords in DATABASE_KEYWORDS.items():
+        for keyword in keywords:
+            # Use word boundary matching for short keywords to avoid false positives
+            if len(keyword) <= 3:
+                # Short keywords need word boundaries
+                if re.search(rf'\b{re.escape(keyword)}\b', text_lower):
+                    detected.add(database)
+                    break
+            else:
+                # Longer keywords can use simple containment
+                if keyword in text_lower:
+                    detected.add(database)
+                    break
+    
+    return detected
+
+
+# ========================================
+# Control Data Structures
+# ========================================
+
 @dataclass
 class Control:
     """A single control from the ai_controls database."""
@@ -44,10 +151,15 @@ class Control:
     control_type: Optional[str]
     priority: int
     contexts: List[str]
-    target_databases: List[str]
+    target_databases: List[str]  # Empty = global control
     content: str  # The actual instruction from page content
     active: bool = True
     url: Optional[str] = None
+    
+    @property
+    def is_global(self) -> bool:
+        """Global controls have no target_database set."""
+        return len(self.target_databases) == 0
     
     @classmethod
     def from_notion_page(cls, page: Dict[str, Any], content: str) -> "Control":
@@ -127,6 +239,10 @@ class ControlsCache:
         self.last_fetch = 0
 
 
+# ========================================
+# Controls Loader
+# ========================================
+
 class ControlsLoader:
     """
     Loads and manages AI controls from Notion.
@@ -134,18 +250,21 @@ class ControlsLoader:
     Features:
     - Fetches active controls from ai_controls database
     - Caches controls with configurable TTL
-    - Filters by control_type, context, or target_database
-    - Formats controls for system prompt injection
+    - Hierarchical loading: global controls always, specific controls when needed
+    - Lightweight keyword detection for selective control inclusion
+    
+    Hierarchy:
+        Priority 1-9:   Global controls (Master Router, Word Dump Parser)
+        Priority 10+:   Database-specific controls (only when relevant)
     
     Example:
         loader = ControlsLoader(cache_ttl=300)
         await loader.initialize(mcp_client)
         
-        # Inject into parser prompt
-        controls_section = loader.format_for_prompt()
-        
-        # Or get specific control types
-        routing_rules = loader.get_by_type(ControlType.ROUTING_LOGIC)
+        # Smart loading based on input
+        controls_section = loader.format_for_input("ate eggs for breakfast")
+        # → Includes: Master Router, Word Dump Parser, Calorie Tracking Parser
+        # → Excludes: Zettelkasten Standards, Habit Tracker Rules, etc.
     """
     
     SOURCE_NAME = "ai_controls"
@@ -168,6 +287,16 @@ class ControlsLoader:
     def controls(self) -> List[Control]:
         """Get all cached controls."""
         return self._cache.controls
+    
+    @property
+    def global_controls(self) -> List[Control]:
+        """Get controls that apply to all inputs (no target_database)."""
+        return [c for c in self._cache.controls if c.is_global]
+    
+    @property
+    def specific_controls(self) -> List[Control]:
+        """Get controls that target specific databases."""
+        return [c for c in self._cache.controls if not c.is_global]
     
     async def initialize(self, mcp_client) -> None:
         """
@@ -220,88 +349,75 @@ class ControlsLoader:
         
         self._cache.update(controls)
     
+    # ========================================
+    # Filtering Methods
+    # ========================================
+    
     def get_by_type(self, control_type: ControlType | str) -> List[Control]:
-        """
-        Get controls of a specific type.
-        
-        Args:
-            control_type: Control type to filter by
-        
-        Returns:
-            List of matching controls, sorted by priority
-        """
+        """Get controls of a specific type."""
         type_str = control_type.value if isinstance(control_type, ControlType) else control_type
         return [c for c in self._cache.controls if c.control_type == type_str]
     
     def get_by_context(self, context: str) -> List[Control]:
-        """
-        Get controls matching a specific context.
-        
-        Args:
-            context: Context tag to filter by
-        
-        Returns:
-            List of matching controls
-        """
+        """Get controls matching a specific context."""
         return [c for c in self._cache.controls if context in c.contexts]
     
     def get_by_database(self, database: str) -> List[Control]:
-        """
-        Get controls targeting a specific database.
-        
-        Args:
-            database: Database name to filter by
-        
-        Returns:
-            List of matching controls
-        """
+        """Get controls targeting a specific database."""
         return [c for c in self._cache.controls if database in c.target_databases]
     
-    def get_relevant_controls(
-        self,
-        contexts: Optional[List[str]] = None,
-        databases: Optional[List[str]] = None,
-        control_types: Optional[List[str]] = None
-    ) -> List[Control]:
+    def get_controls_for_databases(self, databases: Set[str]) -> List[Control]:
         """
-        Get controls matching any of the given filters.
+        Get global controls + controls targeting any of the specified databases.
         
         Args:
-            contexts: List of context tags to match
-            databases: List of target databases to match
-            control_types: List of control types to match
+            databases: Set of database names detected from input
         
         Returns:
-            List of matching controls, deduplicated and sorted by priority
+            List of relevant controls, sorted by priority
         """
-        matched = set()
-        results = []
+        relevant = []
         
         for control in self._cache.controls:
-            # Skip if already matched
-            if control.page_id in matched:
+            # Always include global controls
+            if control.is_global:
+                relevant.append(control)
                 continue
             
-            # Check contexts
-            if contexts and any(ctx in control.contexts for ctx in contexts):
-                matched.add(control.page_id)
-                results.append(control)
-                continue
-            
-            # Check databases
-            if databases and any(db in control.target_databases for db in databases):
-                matched.add(control.page_id)
-                results.append(control)
-                continue
-            
-            # Check control types
-            if control_types and control.control_type in control_types:
-                matched.add(control.page_id)
-                results.append(control)
-                continue
+            # Include if any target database matches
+            if any(db in databases for db in control.target_databases):
+                relevant.append(control)
         
-        # Sort by priority
-        return sorted(results, key=lambda c: c.priority)
+        # Already sorted by priority from Notion query, but ensure it
+        return sorted(relevant, key=lambda c: c.priority)
+    
+    # ========================================
+    # Formatting Methods
+    # ========================================
+    
+    def format_for_input(self, user_input: str, include_metadata: bool = True) -> str:
+        """
+        Format controls for a specific user input using keyword detection.
+        
+        This is the RECOMMENDED method for prompt injection. It:
+        1. Detects which databases might be relevant via keywords
+        2. Includes global controls (always)
+        3. Includes only relevant database-specific controls
+        
+        Args:
+            user_input: The user's natural language input
+            include_metadata: Include control type and target info in XML
+        
+        Returns:
+            Formatted string ready for prompt injection
+        """
+        # Detect relevant databases
+        detected = detect_databases(user_input)
+        
+        # Get relevant controls
+        controls = self.get_controls_for_databases(detected)
+        
+        return self._format_controls(controls, include_metadata, detected)
     
     def format_for_prompt(
         self,
@@ -319,41 +435,12 @@ class ControlsLoader:
             Formatted string ready for prompt injection
         """
         controls_to_format = controls or self._cache.controls
-        
-        if not controls_to_format:
-            return ""
-        
-        sections = ["<agent_controls>"]
-        
-        for control in controls_to_format:
-            # Skip empty content
-            if not control.content.strip():
-                continue
-            
-            # Build control tag
-            attrs = [f'name="{control.name}"']
-            
-            if include_metadata:
-                if control.control_type:
-                    attrs.append(f'type="{control.control_type}"')
-                if control.target_databases:
-                    attrs.append(f'targets="{",".join(control.target_databases)}"')
-                attrs.append(f'priority="{control.priority}"')
-            
-            attr_str = " ".join(attrs)
-            
-            sections.append(f"<control {attr_str}>")
-            sections.append(control.content.strip())
-            sections.append("</control>")
-            sections.append("")  # Empty line between controls
-        
-        sections.append("</agent_controls>")
-        
-        return "\n".join(sections)
+        return self._format_controls(controls_to_format, include_metadata)
     
     def format_routing_prompt(self) -> str:
         """
         Get formatted routing-specific controls for the parser.
+        DEPRECATED: Use format_for_input() instead for smart loading.
         
         Returns:
             Formatted string with master router + database-specific rules
@@ -367,11 +454,112 @@ class ControlsLoader:
         all_controls = routing_controls + quality_controls + template_controls
         all_controls.sort(key=lambda c: c.priority)
         
-        return self.format_for_prompt(all_controls, include_metadata=True)
+        return self._format_controls(all_controls, include_metadata=True)
+    
+    def _format_controls(
+        self, 
+        controls: List[Control], 
+        include_metadata: bool = False,
+        detected_databases: Optional[Set[str]] = None
+    ) -> str:
+        """Internal method to format controls as XML."""
+        if not controls:
+            return ""
+        
+        sections = ["<agent_controls>"]
+        
+        # Add detection info if available
+        if detected_databases:
+            sections.append(f"<!-- Detected databases: {', '.join(sorted(detected_databases))} -->")
+            sections.append("")
+        
+        for control in controls:
+            # Skip empty content
+            if not control.content.strip():
+                continue
+            
+            # Build control tag
+            attrs = [f'name="{control.name}"']
+            
+            if include_metadata:
+                if control.control_type:
+                    attrs.append(f'type="{control.control_type}"')
+                if control.target_databases:
+                    attrs.append(f'targets="{",".join(control.target_databases)}"')
+                else:
+                    attrs.append('targets="global"')
+                attrs.append(f'priority="{control.priority}"')
+            
+            attr_str = " ".join(attrs)
+            
+            sections.append(f"<control {attr_str}>")
+            sections.append(control.content.strip())
+            sections.append("</control>")
+            sections.append("")  # Empty line between controls
+        
+        sections.append("</agent_controls>")
+        
+        return "\n".join(sections)
     
     def invalidate_cache(self) -> None:
         """Force cache invalidation."""
         self._cache.clear()
+    
+    # ========================================
+    # Debug / Inspection Methods
+    # ========================================
+    
+    def get_stats(self) -> Dict[str, Any]:
+        """Get statistics about loaded controls."""
+        return {
+            "total": len(self.controls),
+            "global": len(self.global_controls),
+            "specific": len(self.specific_controls),
+            "by_type": {
+                ct.value: len(self.get_by_type(ct))
+                for ct in ControlType
+            },
+            "cache_age_seconds": int(time.time() - self._cache.last_fetch) if self._cache.last_fetch else None,
+            "cache_ttl_seconds": self._cache.ttl_seconds,
+        }
+    
+    def preview_for_input(self, user_input: str) -> Dict[str, Any]:
+        """
+        Preview which controls would be included for a given input.
+        Useful for debugging.
+        
+        Args:
+            user_input: The user's natural language input
+        
+        Returns:
+            Dict with detection results and control names
+        """
+        detected = detect_databases(user_input)
+        controls = self.get_controls_for_databases(detected)
+        
+        return {
+            "input": user_input,
+            "detected_databases": sorted(detected),
+            "controls_included": [
+                {
+                    "name": c.name,
+                    "type": c.control_type,
+                    "priority": c.priority,
+                    "is_global": c.is_global,
+                    "targets": c.target_databases,
+                }
+                for c in controls
+            ],
+            "controls_excluded": [
+                {
+                    "name": c.name,
+                    "targets": c.target_databases,
+                }
+                for c in self._cache.controls
+                if c not in controls
+            ],
+            "total_chars": len(self.format_for_input(user_input)),
+        }
 
 
 # ========================================
@@ -418,38 +606,64 @@ async def initialize_controls(mcp_client, cache_ttl: int = 300) -> ControlsLoade
 # ========================================
 
 async def main():
-    """Example usage of the controls loader."""
+    """Example usage of the controls loader with hierarchical loading."""
     from rich import print as rprint
     from rich.panel import Panel
+    from rich.table import Table
     
     from src.notion_assistant.clients.mcp_client import NotionMCPClient
     
-    rprint("[bold cyan]═══ AI Controls Loader Demo ═══[/bold cyan]\n")
+    rprint("[bold cyan]═══ AI Controls Loader Demo (Hierarchical) ═══[/bold cyan]\n")
     
     async with NotionMCPClient() as mcp:
         # Initialize controls
         loader = await initialize_controls(mcp)
         
-        rprint(f"[green]✓ Loaded {len(loader.controls)} active controls[/green]\n")
+        # Show stats
+        stats = loader.get_stats()
+        rprint(f"[green]✓ Loaded {stats['total']} controls[/green]")
+        rprint(f"  • Global: {stats['global']}")
+        rprint(f"  • Database-specific: {stats['specific']}\n")
         
         # Show all controls
+        table = Table(title="All Controls", show_header=True)
+        table.add_column("Priority")
+        table.add_column("Name")
+        table.add_column("Type")
+        table.add_column("Targets")
+        table.add_column("Chars")
+        
         for control in loader.controls:
-            rprint(f"[bold]{control.name}[/bold]")
-            rprint(f"  Type: {control.control_type}")
-            rprint(f"  Priority: {control.priority}")
-            rprint(f"  Contexts: {', '.join(control.contexts) or 'none'}")
-            rprint(f"  Targets: {', '.join(control.target_databases) or 'all'}")
-            rprint(f"  Content: {len(control.content)} chars")
+            table.add_row(
+                str(control.priority),
+                control.name,
+                control.control_type or "-",
+                ", ".join(control.target_databases) if control.target_databases else "[global]",
+                str(len(control.content))
+            )
+        
+        rprint(table)
+        rprint()
+        
+        # Test hierarchical loading
+        test_inputs = [
+            "Create a note about FastMCP",
+            "Ate eggs for breakfast, about 200 calories",
+            "Did my workout and had an idea about webhooks",
+            "Spent $50 on lunch and finished the deployment task",
+        ]
+        
+        rprint("[bold cyan]═══ Hierarchical Loading Test ═══[/bold cyan]\n")
+        
+        for user_input in test_inputs:
+            preview = loader.preview_for_input(user_input)
+            
+            rprint(f"[yellow]Input:[/yellow] {user_input}")
+            rprint(f"[dim]Detected: {', '.join(preview['detected_databases']) or 'none'}[/dim]")
+            rprint(f"[green]Included ({len(preview['controls_included'])}):[/green] {', '.join(c['name'] for c in preview['controls_included'])}")
+            rprint(f"[red]Excluded ({len(preview['controls_excluded'])}):[/red] {', '.join(c['name'] for c in preview['controls_excluded'])}")
+            rprint(f"[dim]Prompt size: {preview['total_chars']} chars[/dim]")
             rprint()
-        
-        # Show formatted prompt section
-        prompt_section = loader.format_routing_prompt()
-        
-        rprint(Panel(
-            prompt_section[:2000] + "..." if len(prompt_section) > 2000 else prompt_section,
-            title="Formatted for Prompt Injection",
-            border_style="cyan"
-        ))
 
 
 if __name__ == "__main__":

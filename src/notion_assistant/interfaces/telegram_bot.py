@@ -165,7 +165,8 @@ class TelegramNotionBot:
             "/status - Check system status\n"
             "/refresh - Reload everything (slow)\n"
             "/refresh\_controls - Reload AI controls only (fast)\n"
-            "/refresh\_schemas - Reload database schemas only\n\n"
+            "/refresh\_schemas - Reload database schemas only\n"
+            "/preview `<text>` - Preview which controls load for input\n\n"
             "_Tip: Edit AI controls in Notion, then /refresh\_controls!_",
             parse_mode="Markdown"
         )
@@ -191,7 +192,8 @@ class TelegramNotionBot:
         if self._initialized:
             status_parts.append(f"• Databases loaded: {len(self.assistant.available_databases)}")
             if self.assistant.controls_loader:
-                status_parts.append(f"• AI Controls loaded: {len(self.assistant.controls_loader.controls)}")
+                stats = self.assistant.controls_loader.get_stats()
+                status_parts.append(f"• AI Controls: {stats['total']} ({stats['global']} global, {stats['specific']} specific)")
         await update.message.reply_text("\n".join(status_parts), parse_mode="Markdown")
 
     @_require_authorization
@@ -246,6 +248,54 @@ class TelegramNotionBot:
         except Exception as e:
             logger.error(f"Failed to refresh schemas: {e}")
             await update.message.reply_text(f"❌ Failed to refresh: {e}")
+
+    @_require_authorization
+    async def preview_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /preview command to show which controls would be loaded for an input."""
+        # Get the text after /preview
+        if context.args:
+            test_input = " ".join(context.args)
+        else:
+            await update.message.reply_text(
+                "🔍 **Preview Control Loading**\n\n"
+                "Usage: `/preview <your test input>`\n\n"
+                "Example: `/preview ate eggs and did my workout`\n\n"
+                "This shows which AI controls would be included for a given input.",
+                parse_mode="Markdown"
+            )
+            return
+        
+        await self._ensure_initialized()
+        
+        if not self.assistant.controls_loader:
+            await update.message.reply_text("❌ Controls loader not initialized")
+            return
+        
+        preview = self.assistant.controls_loader.preview_for_input(test_input)
+        
+        # Format response
+        included = preview['controls_included']
+        excluded = preview['controls_excluded']
+        
+        included_list = "\n".join(
+            f"  • {c['name']} {'[global]' if c['is_global'] else f\"[{', '.join(c['targets'])}]\"}"
+            for c in included
+        ) or "  (none)"
+        
+        excluded_list = "\n".join(
+            f"  • {c['name']} [{', '.join(c['targets'])}]"
+            for c in excluded
+        ) or "  (none)"
+        
+        await update.message.reply_text(
+            f"🔍 **Control Loading Preview**\n\n"
+            f"**Input:** `{test_input}`\n\n"
+            f"**Detected databases:** {', '.join(preview['detected_databases']) or 'none'}\n\n"
+            f"**Included ({len(included)}):**\n{included_list}\n\n"
+            f"**Excluded ({len(excluded)}):**\n{excluded_list}\n\n"
+            f"**Prompt size:** ~{preview['total_chars']} chars",
+            parse_mode="Markdown"
+        )
     
     # ========================================
     # Message Handler
@@ -297,6 +347,7 @@ class TelegramNotionBot:
         app.add_handler(CommandHandler("refresh", self.refresh_command))
         app.add_handler(CommandHandler("refresh_controls", self.refresh_controls_command))
         app.add_handler(CommandHandler("refresh_schemas", self.refresh_schemas_command))
+        app.add_handler(CommandHandler("preview", self.preview_command))
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_message))
         app.add_error_handler(self.error_handler)
         

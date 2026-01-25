@@ -26,7 +26,7 @@ async def parse_input_node(state: AgentState) -> Dict[str, Any]:
     Handles multi-intent parsing (one input → multiple actions).
     Uses dynamic schemas from the schema manager.
     """
-    rprint("[cyan]🧠 Parsing natural language...[/cyan]")
+    rprint("[cyan] Parsing natural language...[/cyan]")
     
     try:
         # Get schema manager for dynamic database info

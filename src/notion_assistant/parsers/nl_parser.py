@@ -162,31 +162,14 @@ class NaturalLanguageParser:
         
         # Parser for multi-intent output
         self.parser = PydanticOutputParser(pydantic_object=ParsedInput)
-        
-        # Prompt will be built dynamically based on schemas AND controls
-        self._prompt_cache: Optional[ChatPromptTemplate] = None
-        self._prompt_hash: Optional[str] = None
     
-    def _get_prompt_hash(self) -> str:
-        """Generate hash to detect when prompt needs rebuilding."""
-        schema_part = str(self.schema_manager.database_names)
-        controls_part = str(len(self.controls_loader.controls)) if self.controls_loader.is_initialized else "0"
-        return f"{schema_part}|{controls_part}"
-    
-    def _get_prompt(self) -> ChatPromptTemplate:
-        """Get or build the parsing prompt with current schemas and controls."""
+    def _build_prompt(self, user_input: Optional[str] = None) -> ChatPromptTemplate:
+        """Build the parsing prompt with dynamic database context and AI controls.
         
-        # Check if schemas or controls have changed
-        current_hash = self._get_prompt_hash()
-        
-        if self._prompt_cache is None or self._prompt_hash != current_hash:
-            self._prompt_cache = self._build_prompt()
-            self._prompt_hash = current_hash
-        
-        return self._prompt_cache
-    
-    def _build_prompt(self) -> ChatPromptTemplate:
-        """Build the parsing prompt with dynamic database context and AI controls."""
+        Args:
+            user_input: If provided, uses hierarchical control loading
+                       (only includes relevant controls based on detected databases)
+        """
         
         # Get database descriptions from schema manager
         if self.schema_manager.is_initialized:
@@ -205,10 +188,15 @@ class NaturalLanguageParser:
             for db, kws in examples_dict.items()
         ])
         
-        # Get AI controls from Notion
+        # Get AI controls from Notion - use hierarchical loading if input provided
         controls_section = ""
         if self.controls_loader.is_initialized:
-            controls_section = self.controls_loader.format_routing_prompt()
+            if user_input:
+                # Smart loading: only include relevant controls
+                controls_section = self.controls_loader.format_for_input(user_input, include_metadata=True)
+            else:
+                # Fallback: include all controls
+                controls_section = self.controls_loader.format_routing_prompt()
         
         system_message = f"""You are an expert parser for a personal productivity system connected to Notion.
 
@@ -343,7 +331,8 @@ Return a ParsedInput object containing a list of NotionIntent objects.
     async def _parse_with_model(self, user_input: str, llm: ChatOpenAI, model_name: str) -> ParsedInput:
         """Internal parsing with specified LLM instance."""
         
-        prompt = self._get_prompt()
+        # Build prompt with hierarchical control loading based on input
+        prompt = self._build_prompt(user_input)
         chain = prompt | llm | self.parser
         
         try:
@@ -390,9 +379,12 @@ Return a ParsedInput object containing a list of NotionIntent objects.
         self.CONFIDENCE_THRESHOLD = max(0.0, min(1.0, threshold))
     
     def invalidate_prompt_cache(self):
-        """Force prompt rebuild on next parse (use after schema or controls refresh)."""
-        self._prompt_cache = None
-        self._prompt_hash = None
+        """Force prompt rebuild on next parse.
+        
+        Note: With hierarchical loading, prompts are built per-request anyway.
+        This method is kept for API compatibility but is now a no-op.
+        """
+        pass  # Prompts are built fresh for each input now
 
 
 # ========================================
