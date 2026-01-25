@@ -123,7 +123,7 @@ class TelegramNotionBot:
                 f"⛔ Sorry, you're not authorized to use this bot.\n\n"
                 f"Your user ID: `{user.id}`\n\n"
                 "Ask the admin to add your ID to the allowlist.",
-                parse_mode="Markdown"
+                parse_mode="MarkdownV2"
             )
             return
 
@@ -145,7 +145,7 @@ class TelegramNotionBot:
             "• Ate breakfast, did 30 min cardio, finished task\n"
             "• Search for notes about machine learning\n\n"
             "Use /help to see all commands.",
-            parse_mode="Markdown"
+            parse_mode="MarkdownV2"
         )
     
     @_require_authorization
@@ -172,7 +172,7 @@ Just send me natural language messages describing what you want to do.
 /preview `\<text\>` - Preview which controls load for input
 
 _Tip: Edit AI controls in Notion, then use /refresh\_controls\!_""",
-            parse_mode="Markdown"
+            parse_mode="MarkdownV2"
         )
 
     @_require_authorization
@@ -183,7 +183,7 @@ _Tip: Edit AI controls in Notion, then use /refresh\_controls\!_""",
         db_list = "\n".join(f"• `{db}`" for db in databases) if databases else "No databases found."
         await update.message.reply_text(
             f"📊 **Available Databases ({len(databases)})**\n\n{db_list}",
-            parse_mode="Markdown"
+            parse_mode="MarkdownV2"
         )
 
     @_require_authorization
