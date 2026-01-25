@@ -164,10 +164,10 @@ class TelegramNotionBot:
             "/databases - List available databases\n"
             "/status - Check system status\n"
             "/refresh - Reload everything (slow)\n"
-            "/refresh\_controls - Reload AI controls only (fast)\n"
-            "/refresh\_schemas - Reload database schemas only\n"
+            "/refresh_controls - Reload AI controls only (fast)\n"
+            "/refresh_schemas - Reload database schemas only\n"
             "/preview `<text>` - Preview which controls load for input\n\n"
-            "_Tip: Edit AI controls in Notion, then /refresh\_controls!_",
+            "_Tip: Edit AI controls in Notion, then use /refresh_controls!_",
             parse_mode="Markdown"
         )
 
@@ -277,15 +277,20 @@ class TelegramNotionBot:
         included = preview['controls_included']
         excluded = preview['controls_excluded']
         
-        included_list = "\n".join(
-            f"  • {c['name']} {'[global]' if c['is_global'] else f\"[{', '.join(c['targets'])}]\"}"
-            for c in included
-        ) or "  (none)"
+        included_lines = []
+        for c in included:
+            if c['is_global']:
+                included_lines.append(f"  • {c['name']} [global]")
+            else:
+                targets = ', '.join(c['targets'])
+                included_lines.append(f"  • {c['name']} [{targets}]")
+        included_list = "\n".join(included_lines) or "  (none)"
         
-        excluded_list = "\n".join(
-            f"  • {c['name']} [{', '.join(c['targets'])}]"
-            for c in excluded
-        ) or "  (none)"
+        excluded_lines = []
+        for c in excluded:
+            targets = ', '.join(c['targets'])
+            excluded_lines.append(f"  • {c['name']} [{targets}]")
+        excluded_list = "\n".join(excluded_lines) or "  (none)"
         
         await update.message.reply_text(
             f"🔍 **Control Loading Preview**\n\n"
