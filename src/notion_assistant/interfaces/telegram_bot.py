@@ -166,8 +166,8 @@ class TelegramNotionBot:
             "/refresh - Reload everything (slow)\n"
             "/refresh_controls - Reload AI controls only (fast)\n"
             "/refresh_schemas - Reload database schemas only\n"
-            "/preview `<text>` - Preview which controls load for input\n\n"
-            "_Tip: Edit AI controls in Notion, then use /refresh_controls!_",
+            "/preview `\<text\>` - Preview which controls load for input\n\n"
+            "_Tip: Edit AI controls in Notion, then use /refresh\_controls\!_",
             parse_mode="Markdown"
         )
 
