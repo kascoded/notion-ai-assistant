@@ -152,22 +152,26 @@ class TelegramNotionBot:
     async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /help command."""
         await update.message.reply_text(
-            "📚 **Notion Assistant Help**\n\n"
-            "Just send me natural language messages describing what you want to do.\n\n"
-            "**Examples:**\n"
-            "• `Create a note about X with tags Y, Z`\n"
-            "• `Search for notes about machine learning`\n"
-            "• `Ate breakfast, did cardio, finished project`\n\n"
-            "**Commands:**\n"
-            "/start - Welcome message\n"
-            "/help - This help message\n"
-            "/databases - List available databases\n"
-            "/status - Check system status\n"
-            "/refresh - Reload everything (slow)\n"
-            "/refresh_controls - Reload AI controls only (fast)\n"
-            "/refresh_schemas - Reload database schemas only\n"
-            "/preview `\<text\>` - Preview which controls load for input\n\n"
-            "_Tip: Edit AI controls in Notion, then use /refresh\_controls\!_",
+            r"""📚 **Notion Assistant Help**
+
+Just send me natural language messages describing what you want to do.
+
+**Examples:**
+• `Create a note about X with tags Y, Z`
+• `Search for notes about machine learning`
+• `Ate breakfast, did cardio, finished project`
+
+**Commands:**
+/start - Welcome message
+/help - This help message
+/databases - List available databases
+/status - Check system status
+/refresh - Reload everything (slow)
+/refresh_controls - Reload AI controls only (fast)
+/refresh_schemas - Reload database schemas only
+/preview `\<text\>` - Preview which controls load for input
+
+_Tip: Edit AI controls in Notion, then use /refresh\_controls\!_""",
             parse_mode="Markdown"
         )
 
