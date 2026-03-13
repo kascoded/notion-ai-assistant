@@ -322,6 +322,40 @@ async def format_response_node(state: AgentState) -> Dict[str, Any]:
     return {"response": response}
 
 
+def _extract_section(content: str, section_hint: str) -> str:
+    """
+    Extract a named section from markdown content.
+    Looks for a heading matching the section hint and returns its content.
+    Falls back to full content if no match found.
+    """
+    if not section_hint or not content:
+        return content
+
+    lines = content.split("\n")
+    hint_lower = section_hint.lower()
+    start = None
+
+    for i, line in enumerate(lines):
+        if line.startswith("#") and hint_lower in line.lower():
+            start = i
+            break
+
+    if start is None:
+        return content
+
+    # Collect lines until the next same-or-higher-level heading
+    heading_level = len(lines[start]) - len(lines[start].lstrip("#"))
+    section_lines = [lines[start]]
+    for line in lines[start + 1:]:
+        if line.startswith("#"):
+            level = len(line) - len(line.lstrip("#"))
+            if level <= heading_level:
+                break
+        section_lines.append(line)
+
+    return "\n".join(section_lines).strip()
+
+
 def _format_single_result(intent: NotionIntent, result: Dict[str, Any]) -> str:
     """Format a single intent result."""
     
@@ -349,9 +383,16 @@ def _format_single_result(intent: NotionIntent, result: Dict[str, Any]) -> str:
     
     elif intent.action == ActionType.READ:
         title = html.escape(result.get("title", "Page"))
-        content = html.escape(result.get("content", ""))
-        preview = content[:200] + "..." if len(content) > 200 else content
-        return f"📄 <b>{title}</b>\n{preview}"
+        url = result.get("url", "")
+        content = result.get("content", "")
+        section = intent.properties.get("section", "") if intent.properties else ""
+        link = f'\n🔗 <a href="{url}">Open in Notion</a>' if url else ""
+        if section:
+            extracted = _extract_section(content, section)
+            if extracted and extracted != content:
+                display = html.escape(extracted[:800])
+                return f"📄 <b>{title}</b> — {html.escape(section)}\n\n{display}{link}"
+        return f"📄 <b>{title}</b>{link}"
     
     elif intent.action == ActionType.UPDATE and intent.database == HABITS_DB_NAME:
         from datetime import date

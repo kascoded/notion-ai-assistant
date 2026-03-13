@@ -130,14 +130,18 @@ async def handle_search(mcp: NotionMCPClient, intent: NotionIntent) -> Dict[str,
 
 async def handle_read(mcp: NotionMCPClient, intent: NotionIntent) -> Dict[str, Any]:
     """Handle read action."""
-    
+
     if intent.page_id:
         return await mcp.get_page_content(page_id=intent.page_id)
     elif intent.title:
-        return await mcp.find_page_by_name(
+        found = await mcp.find_page_by_name(
             database_name=intent.database,
             page_name=intent.title
         )
+        if found.get("found") == False:
+            raise ValueError(f"Page '{intent.title}' not found in {intent.database}")
+        page_id = found.get("page_id")
+        return await mcp.get_page_content(page_id=page_id)
     else:
         raise ValueError("Need either page_id or title for read operation")
 
