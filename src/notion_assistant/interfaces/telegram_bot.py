@@ -351,7 +351,7 @@ class TelegramNotionBot:
     
     async def error_handler(self, update: object, context: ContextTypes.DEFAULT_TYPE):
         """Log Errors caused by Updates."""
-        logger.error(f"Update {update} caused error {context.error}")
+        logger.error("Update %s caused error %s", update, context.error, exc_info=context.error)
     
     # ========================================
     # Run Bot
@@ -359,7 +359,12 @@ class TelegramNotionBot:
     
     def build_application(self) -> Application:
         """Build the Telegram application with handlers."""
-        app = Application.builder().token(self.token).build()
+        async def _post_init(app: Application) -> None:
+            logger.info("Initializing assistant at startup...")
+            await self.assistant.initialize()
+            self._initialized = True
+
+        app = Application.builder().token(self.token).post_init(_post_init).build()
         
         app.add_handler(CommandHandler("start", self.start_command))
         app.add_handler(CommandHandler("help", self.help_command))
@@ -420,7 +425,7 @@ def run_bot():
     if os.getenv("PORT") and os.getenv("WEBHOOK_URL"):
         bot.run_webhook()
     else:
-        logger.warning("PORT/WEBHOOK_URL not set, falling back to polling.")
+        logger.info("PORT/WEBHOOK_URL not set, running in polling mode.")
         bot.run_polling()
 
 # ========================================

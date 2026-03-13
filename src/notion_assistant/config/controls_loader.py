@@ -25,6 +25,7 @@ Usage:
     # Or get all controls (old behavior)
     prompt_section = loader.format_for_prompt()
 """
+import asyncio
 import time
 import re
 from typing import Dict, Any, List, Optional, Set
@@ -94,10 +95,6 @@ DATABASE_KEYWORDS: Dict[str, List[str]] = {
     "recipe_collection": [
         "recipe", "recipes", "cook", "cooking", "cooked",
         "ingredients", "how to make"
-    ],
-    "reading_list": [
-        "book", "books", "reading list", "want to read",
-        "audiobook", "author"
     ],
     "media_library": [
         "movie", "movies", "show", "shows", "tv", "watch", "watched",
@@ -272,12 +269,13 @@ class ControlsLoader:
     def __init__(self, cache_ttl: int = 300):
         """
         Initialize the controls loader.
-        
+
         Args:
             cache_ttl: Cache time-to-live in seconds (default: 5 minutes)
         """
         self._cache = ControlsCache(ttl_seconds=cache_ttl)
         self._initialized = False
+        self._refresh_lock: asyncio.Lock = asyncio.Lock()
     
     @property
     def is_initialized(self) -> bool:
@@ -311,43 +309,49 @@ class ControlsLoader:
     async def refresh(self, mcp_client, force: bool = False) -> None:
         """
         Refresh controls from Notion.
-        
+
+        Uses double-checked locking so concurrent callers only run one refresh.
+
         Args:
             mcp_client: NotionMCPClient instance
             force: Refresh even if cache is fresh
         """
+        # Fast path — cache is fresh
         if not force and not self._cache.is_stale and not self._cache.is_empty:
             return
-        
-        # Query all active controls
-        result = await mcp_client.query_database(
-            database_name=self.SOURCE_NAME,
-            filter={
-                "property": "active",
-                "checkbox": {"equals": True}
-            },
-            sorts=[{"property": "priority", "direction": "ascending"}],
-            page_size=50
-        )
-        
-        pages = result.get("results", [])
-        
-        # Fetch content for each control
-        controls = []
-        for page in pages:
-            page_id = page.get("id", "")
-            
-            # Fetch page content (the actual instructions)
-            try:
-                content_result = await mcp_client.get_page_content(page_id)
-                content = content_result.get("content_markdown", "")
-            except Exception:
-                content = ""
-            
-            control = Control.from_notion_page(page, content)
-            controls.append(control)
-        
-        self._cache.update(controls)
+
+        async with self._refresh_lock:
+            # Re-check inside the lock in case another coroutine already refreshed
+            if not force and not self._cache.is_stale and not self._cache.is_empty:
+                return
+
+            # Query all active controls
+            result = await mcp_client.query_database(
+                database_name=self.SOURCE_NAME,
+                filter={
+                    "property": "active",
+                    "checkbox": {"equals": True}
+                },
+                sorts=[{"property": "priority", "direction": "ascending"}],
+                page_size=50
+            )
+
+            pages = result.get("results", [])
+
+            # Fetch content for each control
+            controls = []
+            for page in pages:
+                page_id = page.get("id", "")
+                try:
+                    content_result = await mcp_client.get_page_content(page_id)
+                    content = content_result.get("content_markdown", "")
+                except Exception:
+                    content = ""
+
+                control = Control.from_notion_page(page, content)
+                controls.append(control)
+
+            self._cache.update(controls)
     
     # ========================================
     # Filtering Methods

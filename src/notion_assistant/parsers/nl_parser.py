@@ -331,8 +331,6 @@ Return a ParsedInput object containing a list of NotionIntent objects.
             "exercise": "exercises",
             "blog": "blog_content",
             "media": "media_library",
-            "book": "reading_list",
-            "books": "reading_list",
         }
         
         if name_lower in aliases:
@@ -383,23 +381,9 @@ Return a ParsedInput object containing a list of NotionIntent objects.
             return result
             
         except Exception as e:
-            # Return a low-confidence fallback
-            return ParsedInput(
-                intents=[
-                    NotionIntent(
-                        action=ActionType.CREATE,
-                        database="zettelkasten",
-                        title=user_input[:50],
-                        content=user_input,
-                        confidence=0.3,
-                        reasoning=f"Parsing failed: {str(e)}, defaulting to zettelkasten capture"
-                    )
-                ],
-                raw_input=user_input,
-                overall_confidence=0.3,
-                model_used=model_name,
-                escalated=False
-            )
+            # Re-raise so parse_input_node surfaces a real error to the user
+            # rather than silently creating a junk zettelkasten note
+            raise RuntimeError(f"LLM parsing failed ({model_name}): {e}") from e
     
     def get_available_databases(self) -> List[str]:
         """Get list of available database names."""
