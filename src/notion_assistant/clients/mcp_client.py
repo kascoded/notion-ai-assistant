@@ -431,13 +431,29 @@ class NotionMCPClient:
     
     async def list_databases(self) -> Dict[str, Any]:
         """
-        List all accessible databases.
-        
+        List all configured databases by validating each against the Notion workspace.
+
+        Uses the notion_validate_config tool which iterates every database name
+        registered in the MCP server's config and returns their IDs, titles and URLs.
+
         Returns:
-            List of databases with IDs, titles, and URLs
+            Dict with a "data_sources" list, each entry containing:
+              id, name (config key), title, url
         """
-        call_result = await self._client.call_tool("notion_list_databases", {})
-        return call_result.data
+        call_result = await self._client.call_tool("notion_validate_config", {})
+        raw = call_result.data  # {"results": {name: {...}}, ...}
+
+        data_sources = []
+        for config_name, info in raw.get("results", {}).items():
+            if info.get("status") == "valid":
+                data_sources.append({
+                    "id": info.get("data_source_id", ""),
+                    "name": config_name,
+                    "title": info.get("title", config_name),
+                    "url": info.get("url", ""),
+                })
+
+        return {"data_sources": data_sources}
     
     async def list_data_sources(
         self,

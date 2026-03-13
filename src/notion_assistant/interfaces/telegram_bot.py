@@ -19,6 +19,7 @@ Usage:
     run_bot()
 """
 import os
+import uuid
 import asyncio
 import logging
 from typing import Optional, Set
@@ -121,9 +122,9 @@ class TelegramNotionBot:
         if not self._check_user(user.id):
             await update.message.reply_text(
                 f"⛔ Sorry, you're not authorized to use this bot.\n\n"
-                f"Your user ID: `{user.id}`\n\n"
+                f"Your user ID: <code>{user.id}</code>\n\n"
                 "Ask the admin to add your ID to the allowlist.",
-                parse_mode="MarkdownV2"
+                parse_mode="HTML"
             )
             return
 
@@ -138,14 +139,14 @@ class TelegramNotionBot:
         await update.message.reply_text(
             f"👋 Hi {user.first_name}!\n\n"
             "I'm your Notion Assistant. Send me natural language messages to manage your Notion workspace.\n\n"
-            f"**Databases:** `{db_list}`\n"
-            f"**AI Controls:** {controls_count} active\n\n"
-            "**Examples:**\n"
+            f"<b>Databases:</b> <code>{db_list}</code>\n"
+            f"<b>AI Controls:</b> {controls_count} active\n\n"
+            "<b>Examples:</b>\n"
             "• Create a note about FastMCP with tags python, mcp\n"
             "• Ate breakfast, did 30 min cardio, finished task\n"
             "• Search for notes about machine learning\n\n"
             "Use /help to see all commands.",
-            parse_mode="MarkdownV2"
+            parse_mode="HTML"
         )
     
     @_require_authorization
@@ -376,18 +377,25 @@ _Tip: Edit AI controls in Notion, then use /refresh\_controls\!_""",
 
         if not port_str: raise ValueError("PORT environment variable not set.")
         if not webhook_url: raise ValueError("WEBHOOK_URL environment variable not set.")
-        
+
         port = int(port_str)
-        
-        logger.info(f"Starting bot with webhook on port {port}...")
+
+        # Use a dedicated opaque secret for the webhook URL path so the bot
+        # token is never exposed in access logs or server-side request URLs.
+        # Set WEBHOOK_SECRET in your environment; if absent a random uuid4 is
+        # generated (it changes on every restart, which is fine for polling
+        # fallback but means the registered webhook path changes too — set the
+        # env var for stable production deployments).
+        url_path = os.getenv("WEBHOOK_SECRET") or str(uuid.uuid4())
+
+        logger.info("Starting bot with webhook on port %d (path is opaque secret)...", port)
         app = self.build_application()
-        url_path = self.token
-        
+
         app.run_webhook(
             listen="0.0.0.0",
             port=port,
             url_path=url_path,
-            webhook_url=f"{webhook_url}/{url_path}"
+            webhook_url=f"{webhook_url}/{url_path}",
         )
         logger.info("Bot started successfully with webhook.")
 

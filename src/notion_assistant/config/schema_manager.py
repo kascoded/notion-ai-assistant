@@ -143,6 +143,7 @@ class SchemaManager:
         self._schemas: Dict[str, DatabaseSchema] = {}
         self._initialized = False
         self._last_refresh: Optional[datetime] = None
+        self._init_lock: asyncio.Lock = asyncio.Lock()
     
     @property
     def is_initialized(self) -> bool:
@@ -156,44 +157,73 @@ class SchemaManager:
     async def initialize(self, mcp_client) -> None:
         """
         Initialize by fetching all database schemas from MCP.
-        
+
+        Uses double-checked locking so concurrent callers (e.g. multiple
+        simultaneous Telegram messages at startup) only run one initialization
+        and the rest wait then return immediately.
+
+        On any failure the manager is left in an uninitialized state
+        (is_initialized remains False, _schemas is cleared) so callers
+        can safely retry rather than operating on partial data.
+
         Args:
             mcp_client: Connected NotionMCPClient instance
+
+        Raises:
+            Exception: Re-raises whatever the MCP call raised, after resetting state.
         """
-        rprint("[cyan]📊 Fetching database schemas from MCP...[/cyan]")
-        
+        # Fast path: already initialized, no lock needed
+        if self._initialized:
+            return
+
+        async with self._init_lock:
+            # Re-check inside the lock in case another coroutine initialized
+            # while we were waiting to acquire it
+            if self._initialized:
+                return
+
+            await self._do_initialize(mcp_client)
+
+    async def _do_initialize(self, mcp_client) -> None:
+        """Internal initialization — must only be called while holding _init_lock."""
+        rprint("[cyan]Fetching database schemas from MCP...[/cyan]")
+
         try:
             # Get list of all databases
             databases_result = await mcp_client.list_databases()
             data_sources = databases_result.get("data_sources", [])
-            
+
             rprint(f"[dim]Found {len(data_sources)} databases[/dim]")
-            
+
             # Fetch schema for each database
             for ds in data_sources:
                 await self._fetch_database_schema(mcp_client, ds)
-            
+
+            # Only mark initialized after the full loop succeeds
             self._initialized = True
             self._last_refresh = datetime.now()
-            
-            rprint(f"[green]✓ Loaded {len(self._schemas)} database schemas[/green]")
-            
+
+            rprint(f"[green]Loaded {len(self._schemas)} database schemas[/green]")
+
         except Exception as e:
-            rprint(f"[red]✗ Failed to initialize schemas: {e}[/red]")
+            # Reset to a clean uninitialized state so the next call can retry
+            self._initialized = False
+            self._schemas.clear()
+            self._last_refresh = None
+            rprint(f"[red]Failed to initialize schemas: {e}[/red]")
             raise
     
     async def _fetch_database_schema(self, mcp_client, data_source: Dict[str, Any]) -> None:
         """Fetch and parse schema for a single database."""
-        
+
         # Extract basic info
         ds_id = data_source.get("id", "")
         title = data_source.get("title", "unknown")
         url = data_source.get("url", "")
-        
-        # Try to get detailed schema via get_data_source
-        # We need to find the config name that maps to this data_source_id
-        # For now, use title as the lookup key
-        config_name = self._normalize_name(title)
+
+        # Prefer the explicit config key name returned by list_databases() over
+        # normalizing the display title, which is error-prone.
+        config_name = data_source.get("name") or self._normalize_name(title)
         
         try:
             schema_result = await mcp_client.get_data_source_schema(config_name)

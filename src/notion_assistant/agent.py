@@ -2,6 +2,7 @@
 Main interface for the Notion Assistant agent.
 Builds the LangGraph and provides a simple class to process requests.
 """
+import asyncio
 from typing import List, Optional
 from langgraph.graph import StateGraph, END
 from rich.console import Console
@@ -63,30 +64,41 @@ class NotionAssistant:
         self.schema_manager: Optional[SchemaManager] = None
         self.controls_loader: Optional[ControlsLoader] = None
         self._initialized = False
+        self._init_lock: asyncio.Lock = asyncio.Lock()
     
     async def initialize(self) -> None:
         """
         Initialize the assistant by fetching schemas from MCP.
-        
+
+        Uses double-checked locking so concurrent callers (e.g. two simultaneous
+        Telegram messages at startup) only run initialization once.
+
         Must be called before processing requests.
         """
+        # Fast path — already initialized
         if self._initialized:
             return
-        
-        self.console.print(Panel(
-            "[cyan]Initializing Notion Assistant...[/cyan]\n"
-            "Fetching database schemas and AI controls from MCP server",
-            border_style="cyan"
-        ))
-        
-        self.schema_manager = get_schema_manager()
-        self.controls_loader = get_controls_loader()
-        
-        async with NotionMCPClient() as mcp:
-            await self.schema_manager.initialize(mcp)
-            await self.controls_loader.initialize(mcp)
-        
-        self._initialized = True
+
+        async with self._init_lock:
+            # Re-check inside the lock in case another coroutine completed
+            # initialization while we were waiting
+            if self._initialized:
+                return
+
+            self.console.print(Panel(
+                "[cyan]Initializing Notion Assistant...[/cyan]\n"
+                "Fetching database schemas and AI controls from MCP server",
+                border_style="cyan"
+            ))
+
+            self.schema_manager = get_schema_manager()
+            self.controls_loader = get_controls_loader()
+
+            async with NotionMCPClient() as mcp:
+                await self.schema_manager.initialize(mcp)
+                await self.controls_loader.initialize(mcp)
+
+            self._initialized = True
         
         # Show available databases
         db_count = len(self.schema_manager.database_names)
