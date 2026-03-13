@@ -19,6 +19,7 @@ Usage:
     run_bot()
 """
 import os
+import time
 import uuid
 import asyncio
 import logging
@@ -317,21 +318,34 @@ _Tip: Edit AI controls in Notion, then use /refresh\_controls\!_""",
         user_input = update.message.text.strip()
         if not user_input: return
 
-        logger.info(f"Processing message from {update.effective_user.id}: {user_input[:50]}...")
+        user_id = update.effective_user.id
+        msg_id = update.message.message_id
+        logger.info("[msg.inbound] user_id=%d msg_id=%d text=%r", user_id, msg_id, user_input)
         await update.message.chat.send_action("typing")
-        
+
+        t0 = time.monotonic()
         try:
             await self._ensure_initialized()
             response = await self.assistant.process(user_input)
-            
+
+            duration_ms = int((time.monotonic() - t0) * 1000)
+            logger.info(
+                "[msg.outbound] user_id=%d msg_id=%d duration_ms=%d len=%d preview=%r",
+                user_id, msg_id, duration_ms, len(response), response[:120],
+            )
+
             for i in range(0, len(response), 4000):
-                await update.message.reply_text(response[i:i+4000])
-        
+                await update.message.reply_text(response[i:i+4000], parse_mode="HTML")
+
         except Exception as e:
-            logger.error(f"Error processing message: {e}", exc_info=True)
+            duration_ms = int((time.monotonic() - t0) * 1000)
+            logger.error(
+                "[msg.error] user_id=%d msg_id=%d duration_ms=%d error=%r",
+                user_id, msg_id, duration_ms, str(e), exc_info=True,
+            )
             await update.message.reply_text(
-                f"❌ Sorry, something went wrong:\n\n`{str(e)[:200]}`",
-                parse_mode="Markdown"
+                f"❌ Sorry, something went wrong:\n\n<code>{str(e)[:200]}</code>",
+                parse_mode="HTML"
             )
     
     # ========================================

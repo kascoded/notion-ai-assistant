@@ -3,6 +3,7 @@ Node functions for the Notion Assistant agent graph.
 Uses dynamic schemas for validation and property formatting.
 """
 import asyncio
+import html
 from typing import Dict, Any, List
 
 from rich import print as rprint
@@ -291,7 +292,7 @@ async def format_response_node(state: AgentState) -> Dict[str, Any]:
     
     # Add model info if escalated
     if parsed.get("escalated"):
-        response_parts.append(f"🔄 *Used enhanced parsing (confidence was low)*\n")
+        response_parts.append(f"🔄 <i>Used enhanced parsing (confidence was low)</i>\n")
     
     # Format each result
     successes = []
@@ -311,7 +312,7 @@ async def format_response_node(state: AgentState) -> Dict[str, Any]:
         response_parts.extend(successes)
     
     if failures:
-        response_parts.append("\n**Issues:**")
+        response_parts.append("\n<b>Issues:</b>")
         response_parts.extend(failures)
     
     response = "\n".join(response_parts)
@@ -325,9 +326,9 @@ def _format_single_result(intent: NotionIntent, result: Dict[str, Any]) -> str:
     """Format a single intent result."""
     
     if intent.action == ActionType.CREATE:
-        title = result.get("title", intent.title or "Untitled")
+        title = html.escape(result.get("title", intent.title or "Untitled"))
         url = result.get("url", "")
-        return f"✅ Created **{title}** in {intent.database}\n   🔗 {url}"
+        return f"✅ Created <b>{title}</b> in {intent.database}\n   🔗 {url}"
     
     elif intent.action == ActionType.SEARCH:
         results_list = result.get("results", [])
@@ -347,10 +348,10 @@ def _format_single_result(intent: NotionIntent, result: Dict[str, Any]) -> str:
         return "\n".join(lines)
     
     elif intent.action == ActionType.READ:
-        title = result.get("title", "Page")
-        content = result.get("content", "")
+        title = html.escape(result.get("title", "Page"))
+        content = html.escape(result.get("content", ""))
         preview = content[:200] + "..." if len(content) > 200 else content
-        return f"📄 **{title}**\n{preview}"
+        return f"📄 <b>{title}</b>\n{preview}"
     
     elif intent.action == ActionType.UPDATE and intent.database == HABITS_DB_NAME:
         from datetime import date

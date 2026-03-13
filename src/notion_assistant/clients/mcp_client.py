@@ -195,6 +195,21 @@ class NotionMCPClient:
         """Async context manager exit - closes connection."""
         if self._client:
             await self._client.__aexit__(exc_type, exc_val, exc_tb)
+
+    async def _call_tool(self, tool_name: str, args: dict) -> Any:
+        """Call an MCP tool with automatic 429 retry/backoff."""
+        from src.notion_assistant.utils.retry import with_notion_retry
+
+        async def _attempt():
+            result = await self._client.call_tool(tool_name, args)
+            # FastMCP may surface 429 as a tool error result rather than raising
+            if getattr(result, "isError", False):
+                error_text = str(getattr(result, "content", ""))
+                if "429" in error_text or "rate_limit" in error_text.lower():
+                    raise RuntimeError(f"Notion rate limit: {error_text}")
+            return result
+
+        return await with_notion_retry(_attempt)
     
     @property
     def is_remote(self) -> bool:
@@ -243,7 +258,7 @@ class NotionMCPClient:
         }
         tool_args = {k: v for k, v in tool_args.items() if v is not None}
         
-        call_result = await self._client.call_tool("notion_query", tool_args)
+        call_result = await self._call_tool("notion_query", tool_args)
         return call_result.data
     
     async def search(
@@ -269,7 +284,7 @@ class NotionMCPClient:
             "page_size": page_size
         }
         tool_args = {k: v for k, v in tool_args.items() if v is not None}
-        call_result = await self._client.call_tool("notion_search", tool_args)
+        call_result = await self._call_tool("notion_search", tool_args)
         return call_result.data
     
     async def find_page_by_name(
@@ -294,7 +309,7 @@ class NotionMCPClient:
             "page_name": page_name,
             "title_property": title_property,
         }
-        call_result = await self._client.call_tool("notion_find_page_by_name", tool_args)
+        call_result = await self._call_tool("notion_find_page_by_name", tool_args)
         return call_result.data
     
     # ========================================
@@ -327,7 +342,7 @@ class NotionMCPClient:
             "parent_page_id": parent_page_id,
         }
         tool_args = {k: v for k, v in tool_args.items() if v is not None}
-        call_result = await self._client.call_tool("notion_create_item", tool_args)
+        call_result = await self._call_tool("notion_create_item", tool_args)
         return call_result.data
     
     # ========================================
@@ -353,7 +368,7 @@ class NotionMCPClient:
             "page_id": page_id,
             "include_content": include_content
         }
-        call_result = await self._client.call_tool("notion_get_page", tool_args)
+        call_result = await self._call_tool("notion_get_page", tool_args)
         return call_result.data
     
     async def get_page_content(
@@ -370,7 +385,7 @@ class NotionMCPClient:
             Object with page_id, title, content (markdown), and url
         """
         tool_args = {"page_id": page_id}
-        call_result = await self._client.call_tool("notion_get_page_content", tool_args)
+        call_result = await self._call_tool("notion_get_page_content", tool_args)
         return call_result.data
     
     # ========================================
@@ -400,7 +415,7 @@ class NotionMCPClient:
             "archived": archived,
         }
         tool_args = {k: v for k, v in tool_args.items() if v is not None}
-        call_result = await self._client.call_tool("notion_update_item", tool_args)
+        call_result = await self._call_tool("notion_update_item", tool_args)
         return call_result.data
     
     async def append_content(
@@ -422,7 +437,7 @@ class NotionMCPClient:
             "page_id": page_id,
             "content_markdown": content_markdown
         }
-        call_result = await self._client.call_tool("notion_append_content", tool_args)
+        call_result = await self._call_tool("notion_append_content", tool_args)
         return call_result.data
     
     # ========================================
@@ -440,7 +455,7 @@ class NotionMCPClient:
             Dict with a "data_sources" list, each entry containing:
               id, name (config key), title, url
         """
-        call_result = await self._client.call_tool("notion_validate_config", {})
+        call_result = await self._call_tool("notion_validate_config", {})
         raw = call_result.data  # {"results": {name: {...}}, ...}
 
         data_sources = []
@@ -469,7 +484,7 @@ class NotionMCPClient:
             List of data sources with IDs and names
         """
         tool_args = {"source_name": database_name}
-        call_result = await self._client.call_tool("notion_list_data_sources", tool_args)
+        call_result = await self._call_tool("notion_list_data_sources", tool_args)
         return call_result.data
     
     async def get_data_source_schema(
@@ -486,7 +501,7 @@ class NotionMCPClient:
             Schema details including properties with types and options
         """
         tool_args = {"source_name": database_name}
-        call_result = await self._client.call_tool("notion_get_data_source", tool_args)
+        call_result = await self._call_tool("notion_get_data_source", tool_args)
         return call_result.data
 
 
