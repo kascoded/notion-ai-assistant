@@ -97,6 +97,9 @@ class TelegramNotionBot:
         else:
             self.allowed_users = allowed_users
         
+        chat_id_env = os.getenv("TELEGRAM_CHAT_ID", "")
+        self.proactive_chat_id = int(chat_id_env) if chat_id_env else None
+
         self.assistant = NotionAssistant()
         self._initialized = False
     
@@ -169,7 +172,8 @@ class TelegramNotionBot:
             "/refresh - Reload everything (slow)\n"
             "/refresh_controls - Reload AI controls only (fast)\n"
             "/refresh_schemas - Reload database schemas only\n"
-            "/preview &lt;text&gt; - Preview which controls load for input\n\n"
+            "/preview &lt;text&gt; - Preview which controls load for input\n"
+            "/checkin - Trigger evening check-in prompt\n\n"
             "<i>Tip: Edit AI controls in Notion, then use /refresh_controls!</i>",
             parse_mode="HTML"
         )
@@ -305,6 +309,12 @@ class TelegramNotionBot:
             parse_mode="HTML"
         )
     
+    @_require_authorization
+    async def checkin_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /checkin command — manual evening check-in trigger."""
+        from src.notion_assistant.interfaces.scheduler import EVENING_MSG
+        await update.message.reply_text(EVENING_MSG, parse_mode="HTML")
+
     # ========================================
     # Message Handler
     # ========================================
@@ -371,7 +381,14 @@ class TelegramNotionBot:
                 )
 
         app = Application.builder().token(self.token).post_init(_post_init).build()
-        
+
+        if self.proactive_chat_id:
+            from src.notion_assistant.interfaces.scheduler import ProactiveScheduler
+            scheduler = ProactiveScheduler(self.proactive_chat_id)
+            scheduler.register(app.job_queue)
+        else:
+            logger.info("TELEGRAM_CHAT_ID not set — proactive check-ins disabled.")
+
         app.add_handler(CommandHandler("start", self.start_command))
         app.add_handler(CommandHandler("help", self.help_command))
         app.add_handler(CommandHandler("databases", self.databases_command))
@@ -380,6 +397,7 @@ class TelegramNotionBot:
         app.add_handler(CommandHandler("refresh_controls", self.refresh_controls_command))
         app.add_handler(CommandHandler("refresh_schemas", self.refresh_schemas_command))
         app.add_handler(CommandHandler("preview", self.preview_command))
+        app.add_handler(CommandHandler("checkin", self.checkin_command))
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_message))
         app.add_error_handler(self.error_handler)
         
