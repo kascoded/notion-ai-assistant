@@ -361,8 +361,14 @@ class TelegramNotionBot:
         """Build the Telegram application with handlers."""
         async def _post_init(app: Application) -> None:
             logger.info("Initializing assistant at startup...")
-            await self.assistant.initialize()
-            self._initialized = True
+            try:
+                await self.assistant.initialize()
+                self._initialized = True
+                logger.info("Assistant initialized successfully at startup.")
+            except Exception as e:
+                logger.warning(
+                    "Startup initialization failed (%s) — will retry on first message.", e
+                )
 
         app = Application.builder().token(self.token).post_init(_post_init).build()
         
