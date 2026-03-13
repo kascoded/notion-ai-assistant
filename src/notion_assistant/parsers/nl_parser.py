@@ -165,12 +165,14 @@ class NaturalLanguageParser:
     
     def _build_prompt(self, user_input: Optional[str] = None) -> ChatPromptTemplate:
         """Build the parsing prompt with dynamic database context and AI controls.
-        
+
         Args:
             user_input: If provided, uses hierarchical control loading
                        (only includes relevant controls based on detected databases)
         """
-        
+        from datetime import date
+        today_iso = date.today().isoformat()  # e.g. "2026-03-13"
+
         # Get database descriptions from schema manager
         if self.schema_manager.is_initialized:
             db_list = self.schema_manager.generate_parser_prompt()
@@ -202,6 +204,10 @@ class NaturalLanguageParser:
 
 Your task is to parse user input and extract ALL distinct intents. A single input may contain multiple actions for different databases.
 
+## Today's Date
+
+Today is {today_iso}. Use this when the user refers to "today", "tonight", or similar relative dates.
+
 ## Available Databases
 
 {db_list}
@@ -214,6 +220,25 @@ IMPORTANT: You must use EXACTLY these database names in your output:
 ## Keyword Hints (which database to use)
 
 {examples_text}
+
+## Habit Tracker Rules
+
+The `habits` database stores ONE page per day. Each page has 8 checkbox properties:
+  sleep, eat, run, workout, stretch, read, draw, jornal (note: "jornal" is the Notion property name — not a typo you should fix)
+
+When the user mentions completing any of these habits, ALWAYS use:
+  action: "update"
+  database: "habits"
+  properties: sleep=true, workout=true, ... (only the habits they mention)
+  tags: []
+
+NEVER use action "create" for habits — the handler will create today's page automatically if it doesn't exist.
+NEVER put habit names in `tags` — put them as boolean values in `properties`.
+
+Examples:
+  "I slept well and worked out"  → update habits, properties: sleep=true, workout=true
+  "Did my run and journaling"    → update habits, properties: run=true, jornal=true
+  "Checked off sleep, eat, read" → update habits, properties: sleep=true, eat=true, read=true
 
 {controls_section}
 

@@ -12,7 +12,9 @@ from src.notion_assistant.parsers.nl_parser import NaturalLanguageParser, Notion
 from src.notion_assistant.clients.mcp_client import NotionMCPClient
 from src.notion_assistant.config.schema_manager import get_schema_manager
 from src.notion_assistant.tools.action_handlers import (
+    HABITS_DB_NAME,
     handle_create,
+    handle_habits_update,
     handle_search,
     handle_read,
     handle_update,
@@ -234,7 +236,7 @@ async def _execute_single_intent(
     """Execute a single intent and return result."""
     
     intent = NotionIntent(**intent_dict)
-    
+
     try:
         if intent.action == ActionType.CREATE:
             result = await handle_create(mcp, intent, schema_manager)
@@ -242,6 +244,9 @@ async def _execute_single_intent(
             result = await handle_search(mcp, intent)
         elif intent.action == ActionType.READ:
             result = await handle_read(mcp, intent)
+        elif intent.action == ActionType.UPDATE and intent.database == HABITS_DB_NAME:
+            from datetime import date
+            result = await handle_habits_update(mcp, intent, date.today().isoformat())
         elif intent.action == ActionType.UPDATE:
             result = await handle_update(mcp, intent, schema_manager)
         elif intent.action == ActionType.APPEND:
@@ -347,6 +352,12 @@ def _format_single_result(intent: NotionIntent, result: Dict[str, Any]) -> str:
         preview = content[:200] + "..." if len(content) > 200 else content
         return f"📄 **{title}**\n{preview}"
     
+    elif intent.action == ActionType.UPDATE and intent.database == HABITS_DB_NAME:
+        updated = result.get("updated_habits", [])
+        display = [h if h != "jornal" else "journal" for h in updated]
+        habits_str = ", ".join(display) if display else "habits"
+        return f"✅ Logged today's habits: {habits_str}"
+
     elif intent.action == ActionType.UPDATE:
         return f"✅ Updated page in {intent.database}"
     

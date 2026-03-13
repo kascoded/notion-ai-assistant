@@ -2,10 +2,18 @@
 Action handlers for executing parsed intents against the Notion API.
 Uses dynamic schema validation for property formatting.
 """
+from datetime import date as date_type
 from typing import Any, Dict, Optional
 from src.notion_assistant.parsers.nl_parser import NotionIntent, ActionType
 from src.notion_assistant.clients.mcp_client import NotionMCPClient
 from src.notion_assistant.config.schema_manager import SchemaManager
+
+# Exact property names in the habit_tracker Notion database
+# Note: "jornal" is a typo in the actual Notion DB — keep it as-is
+HABITS_DB_NAME = "habits"
+HABITS_CHECKBOXES = {"sleep", "eat", "run", "workout", "stretch", "read", "draw", "jornal"}
+# Map common aliases to the actual Notion property names
+HABITS_ALIASES = {"journal": "jornal", "journaling": "jornal", "cardio": "run", "running": "run"}
 
 
 def format_property_with_schema(
@@ -199,6 +207,71 @@ async def handle_update(
         page_id=intent.page_id,
         properties=properties if properties else None
     )
+
+
+async def handle_habits_update(
+    mcp: NotionMCPClient,
+    intent: NotionIntent,
+    today_iso: str,
+) -> Dict[str, Any]:
+    """
+    Handle habit_tracker database updates.
+
+    Finds today's page by the `date` property, creates it if missing,
+    then patches the specified checkbox properties.
+
+    Habits are extracted from:
+      - intent.properties  (e.g. {"workout": True, "sleep": True})
+      - intent.tags        (e.g. ["run", "read"])
+    Aliases like "journal" → "jornal" are resolved automatically.
+    """
+
+    def _resolve(name: str) -> Optional[str]:
+        """Normalize a habit name to the Notion property key."""
+        lower = name.lower().strip()
+        lower = HABITS_ALIASES.get(lower, lower)
+        return lower if lower in HABITS_CHECKBOXES else None
+
+    # Query for today's page
+    query_result = await mcp.query_database(
+        database_name=HABITS_DB_NAME,
+        filter={"property": "date", "date": {"equals": today_iso}},
+        page_size=1,
+    )
+    pages = query_result.get("results", [])
+
+    if pages:
+        page_id = pages[0].get("id") or pages[0].get("page_id")
+    else:
+        # Create today's page — title is the ISO date, date property set
+        created = await mcp.create_page(
+            database_name=HABITS_DB_NAME,
+            properties={
+                "title": {"title": [{"text": {"content": today_iso}}]},
+                "date": {"date": {"start": today_iso}},
+            },
+        )
+        page_id = created.get("id") or created.get("page_id")
+
+    # Collect checkbox updates
+    properties: Dict[str, Any] = {}
+
+    for prop_name, prop_value in intent.properties.items():
+        key = _resolve(prop_name)
+        if key:
+            properties[key] = {"checkbox": bool(prop_value)}
+
+    for tag in intent.tags:
+        key = _resolve(tag)
+        if key and key not in properties:
+            properties[key] = {"checkbox": True}
+
+    if not properties:
+        return {"page_id": page_id, "updated": [], "message": "No matching habits found in input"}
+
+    result = await mcp.update_page(page_id=page_id, properties=properties)
+    result["updated_habits"] = list(properties.keys())
+    return result
 
 
 async def handle_append(mcp: NotionMCPClient, intent: NotionIntent) -> Dict[str, Any]:
