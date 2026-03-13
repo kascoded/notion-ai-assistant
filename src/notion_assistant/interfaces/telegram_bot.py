@@ -18,6 +18,7 @@ Usage:
     from src.notion_assistant.interfaces.telegram_bot import run_bot
     run_bot()
 """
+import html
 import os
 import time
 import uuid
@@ -154,27 +155,23 @@ class TelegramNotionBot:
     async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /help command."""
         await update.message.reply_text(
-            r"""📚 **Notion Assistant Help**
-
-Just send me natural language messages describing what you want to do.
-
-**Examples:**
-• `Create a note about X with tags Y, Z`
-• `Search for notes about machine learning`
-• `Ate breakfast, did cardio, finished project`
-
-**Commands:**
-/start - Welcome message
-/help - This help message
-/databases - List available databases
-/status - Check system status
-/refresh - Reload everything (slow)
-/refresh_controls - Reload AI controls only (fast)
-/refresh_schemas - Reload database schemas only
-/preview `\<text\>` - Preview which controls load for input
-
-_Tip: Edit AI controls in Notion, then use /refresh\_controls\!_""",
-            parse_mode="MarkdownV2"
+            "📚 <b>Notion Assistant Help</b>\n\n"
+            "Just send me natural language messages describing what you want to do.\n\n"
+            "<b>Examples:</b>\n"
+            "• <code>Create a note about X with tags Y, Z</code>\n"
+            "• <code>Search for notes about machine learning</code>\n"
+            "• <code>Ate breakfast, did cardio, finished project</code>\n\n"
+            "<b>Commands:</b>\n"
+            "/start - Welcome message\n"
+            "/help - This help message\n"
+            "/databases - List available databases\n"
+            "/status - Check system status\n"
+            "/refresh - Reload everything (slow)\n"
+            "/refresh_controls - Reload AI controls only (fast)\n"
+            "/refresh_schemas - Reload database schemas only\n"
+            "/preview &lt;text&gt; - Preview which controls load for input\n\n"
+            "<i>Tip: Edit AI controls in Notion, then use /refresh_controls!</i>",
+            parse_mode="HTML"
         )
 
     @_require_authorization
@@ -182,17 +179,17 @@ _Tip: Edit AI controls in Notion, then use /refresh\_controls\!_""",
         """Handle /databases command."""
         await self._ensure_initialized()
         databases = self.assistant.available_databases
-        db_list = "\n".join(f"• `{db}`" for db in databases) if databases else "No databases found."
+        db_list = "\n".join(f"• <code>{db}</code>" for db in databases) if databases else "No databases found."
         await update.message.reply_text(
-            f"📊 **Available Databases ({len(databases)})**\n\n{db_list}",
-            parse_mode="MarkdownV2"
+            f"📊 <b>Available Databases ({len(databases)})</b>\n\n{db_list}",
+            parse_mode="HTML"
         )
 
     @_require_authorization
     async def status_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /status command."""
         status_parts = [
-            "🔧 **System Status**\n",
+            "🔧 <b>System Status</b>\n",
             f"• Assistant initialized: {'✅' if self._initialized else '❌'}",
         ]
         if self._initialized:
@@ -200,7 +197,7 @@ _Tip: Edit AI controls in Notion, then use /refresh\_controls\!_""",
             if self.assistant.controls_loader:
                 stats = self.assistant.controls_loader.get_stats()
                 status_parts.append(f"• AI Controls: {stats['total']} ({stats['global']} global, {stats['specific']} specific)")
-        await update.message.reply_text("\n".join(status_parts), parse_mode="Markdown")
+        await update.message.reply_text("\n".join(status_parts), parse_mode="HTML")
 
     @_require_authorization
     async def refresh_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -263,11 +260,11 @@ _Tip: Edit AI controls in Notion, then use /refresh\_controls\!_""",
             test_input = " ".join(context.args)
         else:
             await update.message.reply_text(
-                "🔍 **Preview Control Loading**\n\n"
-                "Usage: `/preview <your test input>`\n\n"
-                "Example: `/preview ate eggs and did my workout`\n\n"
+                "🔍 <b>Preview Control Loading</b>\n\n"
+                "Usage: <code>/preview &lt;your test input&gt;</code>\n\n"
+                "Example: <code>/preview ate eggs and did my workout</code>\n\n"
                 "This shows which AI controls would be included for a given input.",
-                parse_mode="Markdown"
+                parse_mode="HTML"
             )
             return
         
@@ -299,13 +296,13 @@ _Tip: Edit AI controls in Notion, then use /refresh\_controls\!_""",
         excluded_list = "\n".join(excluded_lines) or "  (none)"
         
         await update.message.reply_text(
-            f"🔍 **Control Loading Preview**\n\n"
-            f"**Input:** `{test_input}`\n\n"
-            f"**Detected databases:** {', '.join(preview['detected_databases']) or 'none'}\n\n"
-            f"**Included ({len(included)}):**\n{included_list}\n\n"
-            f"**Excluded ({len(excluded)}):**\n{excluded_list}\n\n"
-            f"**Prompt size:** ~{preview['total_chars']} chars",
-            parse_mode="Markdown"
+            f"🔍 <b>Control Loading Preview</b>\n\n"
+            f"<b>Input:</b> <code>{html.escape(test_input)}</code>\n\n"
+            f"<b>Detected databases:</b> {html.escape(', '.join(preview['detected_databases']) or 'none')}\n\n"
+            f"<b>Included ({len(included)}):</b>\n{included_list}\n\n"
+            f"<b>Excluded ({len(excluded)}):</b>\n{excluded_list}\n\n"
+            f"<b>Prompt size:</b> ~{preview['total_chars']} chars",
+            parse_mode="HTML"
         )
     
     # ========================================
