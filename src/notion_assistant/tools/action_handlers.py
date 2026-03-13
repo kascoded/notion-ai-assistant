@@ -232,10 +232,13 @@ async def handle_habits_update(
         lower = HABITS_ALIASES.get(lower, lower)
         return lower if lower in HABITS_CHECKBOXES else None
 
-    # Query for today's page
+    # Use explicitly parsed date if LLM extracted one, else fall back to today
+    target_date = intent.target_date or today_iso
+
+    # Query for the target date's page
     query_result = await mcp.query_database(
         database_name=HABITS_DB_NAME,
-        filter={"property": "date", "date": {"equals": today_iso}},
+        filter={"property": "date", "date": {"equals": target_date}},
         page_size=1,
     )
     pages = query_result.get("results", [])
@@ -243,12 +246,12 @@ async def handle_habits_update(
     if pages:
         page_id = pages[0].get("id") or pages[0].get("page_id")
     else:
-        # Create today's page — title is the ISO date, date property set
+        # Create the page for the target date
         created = await mcp.create_page(
             database_name=HABITS_DB_NAME,
             properties={
-                "title": {"title": [{"text": {"content": today_iso}}]},
-                "date": {"date": {"start": today_iso}},
+                "title": {"title": [{"text": {"content": target_date}}]},
+                "date": {"date": {"start": target_date}},
             },
         )
         page_id = created.get("id") or created.get("page_id")
@@ -271,6 +274,7 @@ async def handle_habits_update(
 
     result = await mcp.update_page(page_id=page_id, properties=properties)
     result["updated_habits"] = list(properties.keys())
+    result["target_date"] = target_date
     return result
 
 

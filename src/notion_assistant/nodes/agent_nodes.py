@@ -353,9 +353,13 @@ def _format_single_result(intent: NotionIntent, result: Dict[str, Any]) -> str:
         return f"📄 **{title}**\n{preview}"
     
     elif intent.action == ActionType.UPDATE and intent.database == HABITS_DB_NAME:
+        from datetime import date
         updated = result.get("updated_habits", [])
         display = [h if h != "jornal" else "journal" for h in updated]
         habits_str = ", ".join(display) if display else "habits"
+        target_date = result.get("target_date", date.today().isoformat())
+        if target_date != date.today().isoformat():
+            return f"✅ Logged habits for {target_date}: {habits_str}"
         return f"✅ Logged today's habits: {habits_str}"
 
     elif intent.action == ActionType.UPDATE:

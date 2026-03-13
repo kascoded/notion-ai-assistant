@@ -69,6 +69,10 @@ class NotionIntent(BaseModel):
         default=None,
         description="Page ID for update/read/append operations"
     )
+    target_date: Optional[str] = Field(
+        default=None,
+        description="ISO date string (YYYY-MM-DD) for the target entry date. Only set when the user specifies a date other than today (e.g. 'yesterday', 'march 12th', 'last Monday'). Leave null if user means today."
+    )
     confidence: float = Field(
         default=1.0,
         description="Confidence score for this specific intent (0.0 to 1.0)",
@@ -234,6 +238,8 @@ When the user mentions completing any of these habits, ALWAYS use:
 
 NEVER use action "create" for habits — the handler will create today's page automatically if it doesn't exist.
 NEVER put habit names in `tags` — put them as boolean values in `properties`.
+
+If the user specifies a date other than today (e.g. "march 12th", "yesterday", "last Monday"), resolve it to ISO format (YYYY-MM-DD) and set it as target_date. If no date is mentioned, leave target_date null.
 
 Examples:
   "I slept well and worked out"  → update habits, properties: sleep=true, workout=true
