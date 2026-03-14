@@ -44,7 +44,8 @@ class NotionIntent(BaseModel):
         description="The action to perform: create, search, update, read, append"
     )
     database: str = Field(
-        description="Target database name (must match available database names exactly)"
+        default="calendar",
+        description="Target database name (must match available database names exactly). Use 'calendar' for calendar actions."
     )
     title: Optional[str] = Field(
         default=None,
