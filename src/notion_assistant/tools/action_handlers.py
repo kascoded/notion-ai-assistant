@@ -295,6 +295,8 @@ async def handle_calendar(intent: NotionIntent) -> Dict[str, Any]:
                 end=end,
                 description=intent.content or "",
             )
+        elif intent.calendar_action == "current":
+            return await cal.get_current_and_next()
         else:
             events = await cal.get_events(intent.target_date)
             return {"events": events, "date": intent.target_date or "today"}

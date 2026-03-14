@@ -427,7 +427,20 @@ def _format_single_result(intent: NotionIntent, result: Dict[str, Any]) -> str:
         return f"✅ Appended content to page"
 
     elif intent.action == ActionType.CALENDAR:
-        if "events" in result:
+        if "current" in result or "next" in result:
+            current = result.get("current")
+            nxt = result.get("next")
+            parts = []
+            if current:
+                name = f"<b>{html.escape(current['summary'])}</b>"
+                parts.append(f"Right now: {name} ({current['start']} – {current['end']})")
+            else:
+                parts.append("Nothing scheduled right now.")
+            if nxt:
+                name = f"<b>{html.escape(nxt['summary'])}</b>"
+                parts.append(f"Up next: {name} at {nxt['start']}")
+            return "📅 " + "\n".join(parts)
+        elif "events" in result:
             events = result["events"]
             date_iso = result.get("date", "")
             # Build header with day of week

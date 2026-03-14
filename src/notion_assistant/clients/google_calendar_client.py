@@ -54,6 +54,56 @@ class GoogleCalendarClient:
         dt = datetime.fromisoformat(iso_str).astimezone(tz)
         return dt.strftime("%I:%M %p").lstrip("0")
 
+    async def get_current_and_next(self) -> dict:
+        """Return the event happening right now and the next upcoming event today."""
+        tz = zoneinfo.ZoneInfo(os.getenv("TZ", "America/Los_Angeles"))
+        now = datetime.now(tz=tz)
+        end_of_day = datetime(now.year, now.month, now.day, 23, 59, 59, tzinfo=tz)
+        loop = asyncio.get_event_loop()
+
+        calendar_ids = await loop.run_in_executor(None, self._list_calendar_ids)
+
+        all_events = []
+        for cal_id in calendar_ids:
+            result = await loop.run_in_executor(
+                None,
+                lambda cid=cal_id: self._service.events()
+                .list(
+                    calendarId=cid,
+                    timeMin=now.isoformat(),
+                    timeMax=end_of_day.isoformat(),
+                    singleEvents=True,
+                    orderBy="startTime",
+                    maxResults=10,
+                )
+                .execute(),
+            )
+            for e in result.get("items", []):
+                if "dateTime" not in e["start"]:
+                    continue  # skip all-day events
+                start_dt = datetime.fromisoformat(e["start"]["dateTime"]).astimezone(tz)
+                end_dt = datetime.fromisoformat(e["end"]["dateTime"]).astimezone(tz)
+                all_events.append({
+                    "summary": e.get("summary", "Untitled"),
+                    "start": self._fmt_time(e["start"]["dateTime"]),
+                    "end": self._fmt_time(e["end"]["dateTime"]),
+                    "start_dt": start_dt,
+                    "end_dt": end_dt,
+                    "id": e["id"],
+                })
+
+        all_events.sort(key=lambda e: e["start_dt"])
+
+        current = next((e for e in all_events if e["start_dt"] <= now <= e["end_dt"]), None)
+        upcoming = next((e for e in all_events if e["start_dt"] > now), None)
+
+        def clean(e):
+            if e is None:
+                return None
+            return {k: v for k, v in e.items() if k not in ("start_dt", "end_dt")}
+
+        return {"current": clean(current), "next": clean(upcoming)}
+
     def _list_calendar_ids(self) -> list[str]:
         """Return IDs of all calendars the user has access to."""
         result = self._service.calendarList().list().execute()
