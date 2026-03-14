@@ -4,7 +4,8 @@ Wraps the sync Google API client in a thread executor.
 """
 import asyncio
 import os
-from datetime import date
+import zoneinfo
+from datetime import date, datetime
 from typing import Optional
 
 from dotenv import load_dotenv
@@ -47,11 +48,19 @@ class GoogleCalendarClient:
         )
         return build("calendar", "v3", credentials=creds, cache_discovery=False)
 
+    def _fmt_time(self, iso_str: str) -> str:
+        """Format ISO datetime string to local time like '1:00 PM'."""
+        tz = zoneinfo.ZoneInfo(os.getenv("TZ", "America/Los_Angeles"))
+        dt = datetime.fromisoformat(iso_str).astimezone(tz)
+        return dt.strftime("%I:%M %p").lstrip("0")
+
     async def get_events(self, date_iso: Optional[str] = None) -> list[dict]:
         """Get events for a given date (defaults to today)."""
         target = date_iso or date.today().isoformat()
-        time_min = f"{target}T00:00:00Z"
-        time_max = f"{target}T23:59:59Z"
+        tz = zoneinfo.ZoneInfo(os.getenv("TZ", "America/Los_Angeles"))
+        target_dt = date.fromisoformat(target)
+        time_min = datetime(target_dt.year, target_dt.month, target_dt.day, 0, 0, 0, tzinfo=tz).isoformat()
+        time_max = datetime(target_dt.year, target_dt.month, target_dt.day, 23, 59, 59, tzinfo=tz).isoformat()
         loop = asyncio.get_event_loop()
         result = await loop.run_in_executor(
             None,
@@ -62,22 +71,21 @@ class GoogleCalendarClient:
                 timeMax=time_max,
                 singleEvents=True,
                 orderBy="startTime",
+                maxResults=50,
             )
             .execute(),
         )
-        return [
-            {
+        events = []
+        for e in result.get("items", []):
+            is_all_day = "date" in e["start"] and "dateTime" not in e["start"]
+            events.append({
                 "summary": e.get("summary", "Untitled"),
-                "start": e["start"]
-                .get("dateTime", e["start"].get("date", ""))[:16]
-                .replace("T", " "),
-                "end": e["end"]
-                .get("dateTime", e["end"].get("date", ""))[:16]
-                .replace("T", " "),
+                "start": self._fmt_time(e["start"]["dateTime"]) if not is_all_day else "All day",
+                "end": self._fmt_time(e["end"]["dateTime"]) if not is_all_day else "",
+                "is_all_day": is_all_day,
                 "id": e["id"],
-            }
-            for e in result.get("items", [])
-        ]
+            })
+        return events
 
     async def create_event(
         self, summary: str, start: str, end: str, description: str = ""

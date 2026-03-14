@@ -429,14 +429,24 @@ def _format_single_result(intent: NotionIntent, result: Dict[str, Any]) -> str:
     elif intent.action == ActionType.CALENDAR:
         if "events" in result:
             events = result["events"]
-            date_label = result.get("date", "today")
+            date_iso = result.get("date", "")
+            # Build header with day of week
+            try:
+                from datetime import date as date_type
+                d = date_type.fromisoformat(date_iso) if date_iso and date_iso != "today" else date_type.today()
+                date_label = d.strftime("%A, %B %-d")
+            except (ValueError, TypeError):
+                date_label = date_iso or "Today"
             if not events:
                 return f"📅 No events on {date_label}"
-            lines = [
-                f"• {e['start']} — <b>{html.escape(e['summary'])}</b>"
-                for e in events
-            ]
-            return f"📅 <b>Calendar — {date_label}</b>\n" + "\n".join(lines)
+            lines = []
+            for e in events:
+                name = f"<b>{html.escape(e['summary'])}</b>"
+                if e.get("is_all_day"):
+                    lines.append(f"• All day — {name}")
+                else:
+                    lines.append(f"• {e['start']} – {e['end']} — {name}")
+            return f"📅 <b>{date_label}</b>\n" + "\n".join(lines)
         else:
             url = result.get("url", "")
             summary = html.escape(result.get("summary", "Event"))

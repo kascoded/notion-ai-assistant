@@ -75,7 +75,12 @@ class ProactiveScheduler:
                 async with client as cal:
                     events = await cal.get_events()
                 if events:
-                    lines = [f"• {e['start']} — {e['summary']}" for e in events]
+                    lines = []
+                    for e in events:
+                        if e.get("is_all_day"):
+                            lines.append(f"• All day — {e['summary']}")
+                        else:
+                            lines.append(f"• {e['start']} – {e['end']} — {e['summary']}")
                     calendar_section = "\n\n<b>Today's calendar:</b>\n" + "\n".join(lines)
             except Exception as exc:
                 logger.warning("Calendar fetch failed in morning brief: %s", exc)
