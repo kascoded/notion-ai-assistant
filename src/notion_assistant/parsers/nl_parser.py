@@ -34,6 +34,7 @@ class ActionType(str, Enum):
     UPDATE = "update"
     READ = "read"
     APPEND = "append"
+    CALENDAR = "calendar"
 
 
 class NotionIntent(BaseModel):
@@ -72,6 +73,18 @@ class NotionIntent(BaseModel):
     target_date: Optional[str] = Field(
         default=None,
         description="ISO date string (YYYY-MM-DD) for the target entry date. Only set when the user specifies a date other than today (e.g. 'yesterday', 'march 12th', 'last Monday'). Leave null if user means today."
+    )
+    calendar_action: Optional[str] = Field(
+        default=None,
+        description="Calendar sub-action: 'query' (list events) or 'create' (new event)"
+    )
+    start_time: Optional[str] = Field(
+        default=None,
+        description="ISO datetime for calendar events (e.g. 2026-03-20T14:00:00)"
+    )
+    end_time: Optional[str] = Field(
+        default=None,
+        description="ISO datetime for calendar events end time"
     )
     confidence: float = Field(
         default=1.0,
@@ -296,6 +309,8 @@ Return a ParsedInput object containing a list of NotionIntent objects.
         valid_names = set(self.schema_manager.database_names)
         
         for intent in result.intents:
+            if intent.action == ActionType.CALENDAR:
+                continue  # calendar intents don't map to a Notion database
             if intent.database not in valid_names:
                 # Try to find closest match
                 closest = self._find_closest_database(intent.database)

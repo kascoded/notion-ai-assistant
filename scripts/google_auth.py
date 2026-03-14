@@ -1,0 +1,23 @@
+"""
+One-time OAuth flow to get Google Calendar refresh token.
+Run locally (never on server):
+
+    uv run python scripts/google_auth.py /path/to/credentials.json
+"""
+import sys
+
+from google_auth_oauthlib.flow import InstalledAppFlow
+
+SCOPES = ["https://www.googleapis.com/auth/calendar"]
+
+if len(sys.argv) < 2:
+    print("Usage: uv run python scripts/google_auth.py /path/to/credentials.json")
+    sys.exit(1)
+
+flow = InstalledAppFlow.from_client_secrets_file(sys.argv[1], SCOPES)
+creds = flow.run_local_server(port=0)
+
+print("\nAdd these to your .env:\n")
+print(f"GOOGLE_CLIENT_ID={creds.client_id}")
+print(f"GOOGLE_CLIENT_SECRET={creds.client_secret}")
+print(f"GOOGLE_REFRESH_TOKEN={creds.refresh_token}")

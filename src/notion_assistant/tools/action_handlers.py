@@ -282,6 +282,24 @@ async def handle_habits_update(
     return result
 
 
+async def handle_calendar(intent: NotionIntent) -> Dict[str, Any]:
+    """Handle Google Calendar query or event creation."""
+    from src.notion_assistant.clients.google_calendar_client import GoogleCalendarClient
+
+    async with GoogleCalendarClient() as cal:
+        if intent.calendar_action == "create" and intent.title and intent.start_time:
+            end = intent.end_time or intent.start_time
+            return await cal.create_event(
+                summary=intent.title,
+                start=intent.start_time,
+                end=end,
+                description=intent.content or "",
+            )
+        else:
+            events = await cal.get_events(intent.target_date)
+            return {"events": events, "date": intent.target_date or "today"}
+
+
 async def handle_append(mcp: NotionMCPClient, intent: NotionIntent) -> Dict[str, Any]:
     """Handle append action."""
     

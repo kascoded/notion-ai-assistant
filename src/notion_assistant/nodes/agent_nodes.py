@@ -14,6 +14,7 @@ from src.notion_assistant.clients.mcp_client import NotionMCPClient
 from src.notion_assistant.config.schema_manager import get_schema_manager
 from src.notion_assistant.tools.action_handlers import (
     HABITS_DB_NAME,
+    handle_calendar,
     handle_create,
     handle_habits_update,
     handle_search,
@@ -95,15 +96,28 @@ async def router_node(state: AgentState) -> Dict[str, Any]:
     warnings = []
     
     for i, intent_dict in enumerate(intents):
+        # Calendar intents don't map to a Notion database — skip DB validation
+        if intent_dict.get("action") == ActionType.CALENDAR:
+            plan_item = {
+                "index": i,
+                "intent": intent_dict,
+                "can_parallel": True,
+                "depends_on": None,
+                "priority": 3,
+                "schema_validated": False,
+            }
+            execution_plan.append(plan_item)
+            continue
+
         # Validate database exists
         db_name = intent_dict.get("database", "")
         schema = schema_manager.get_schema(db_name) if schema_manager.is_initialized else None
-        
+
         if schema_manager.is_initialized and not schema:
             warnings.append(f"Unknown database '{db_name}', defaulting to zettelkasten")
             intent_dict["database"] = "zettelkasten"
             schema = schema_manager.get_schema("zettelkasten")
-        
+
         # Validate and fix properties if schema available
         if schema and intent_dict.get("properties"):
             fixed_props, prop_warnings = schema_manager.validate_properties(
@@ -252,6 +266,8 @@ async def _execute_single_intent(
             result = await handle_update(mcp, intent, schema_manager)
         elif intent.action == ActionType.APPEND:
             result = await handle_append(mcp, intent)
+        elif intent.action == ActionType.CALENDAR:
+            result = await handle_calendar(intent)
         else:
             raise ValueError(f"Unknown action: {intent.action}")
         
@@ -409,7 +425,23 @@ def _format_single_result(intent: NotionIntent, result: Dict[str, Any]) -> str:
     
     elif intent.action == ActionType.APPEND:
         return f"✅ Appended content to page"
-    
+
+    elif intent.action == ActionType.CALENDAR:
+        if "events" in result:
+            events = result["events"]
+            date_label = result.get("date", "today")
+            if not events:
+                return f"📅 No events on {date_label}"
+            lines = [
+                f"• {e['start']} — <b>{html.escape(e['summary'])}</b>"
+                for e in events
+            ]
+            return f"📅 <b>Calendar — {date_label}</b>\n" + "\n".join(lines)
+        else:
+            url = result.get("url", "")
+            summary = html.escape(result.get("summary", "Event"))
+            return f"📅 Created: <b>{summary}</b>" + (f"\n🔗 {url}" if url else "")
+
     return f"✅ Completed {intent.action.value}"
 
 

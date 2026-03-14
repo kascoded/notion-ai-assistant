@@ -66,8 +66,24 @@ class ProactiveScheduler:
         )
 
     async def _morning(self, context) -> None:
+        from src.notion_assistant.clients.google_calendar_client import GoogleCalendarClient
+
+        calendar_section = ""
+        client = GoogleCalendarClient()
+        if client.is_configured:
+            try:
+                async with client as cal:
+                    events = await cal.get_events()
+                if events:
+                    lines = [f"• {e['start']} — {e['summary']}" for e in events]
+                    calendar_section = "\n\n<b>Today's calendar:</b>\n" + "\n".join(lines)
+            except Exception as exc:
+                logger.warning("Calendar fetch failed in morning brief: %s", exc)
+
         await context.bot.send_message(
-            chat_id=self.chat_id, text=MORNING_MSG, parse_mode="HTML"
+            chat_id=self.chat_id,
+            text=MORNING_MSG + calendar_section,
+            parse_mode="HTML",
         )
 
     async def _evening(self, context) -> None:
