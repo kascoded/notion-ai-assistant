@@ -44,7 +44,7 @@ class NotionIntent(BaseModel):
         description="The action to perform: create, search, update, read, append"
     )
     database: str = Field(
-        default="calendar",
+        default="zettelkasten",
         description="Target database name (must match available database names exactly). Use 'calendar' for calendar actions."
     )
     title: Optional[str] = Field(
@@ -77,7 +77,7 @@ class NotionIntent(BaseModel):
     )
     calendar_action: Optional[str] = Field(
         default=None,
-        description="Calendar sub-action: 'query' (list events) or 'create' (new event)"
+        description="Calendar sub-action: 'query' (list events), 'current' (what's happening right now / next event), or 'create' (new event)"
     )
     start_time: Optional[str] = Field(
         default=None,

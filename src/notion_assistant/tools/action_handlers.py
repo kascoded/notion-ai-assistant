@@ -119,10 +119,29 @@ async def handle_create(
     )
 
 
+# Date property name per database (used for date-filtered queries)
+DB_DATE_PROPERTY: Dict[str, str] = {
+    "project_management": "Deadline",
+    "workout_schedule": "date",
+    "meal_planning": "date",
+    "expense_tracker": "Due Date",
+    "blog_content": "date",
+    "zettelkasten": "date",
+}
+
+
 async def handle_search(mcp: NotionMCPClient, intent: NotionIntent) -> Dict[str, Any]:
     """Handle search action."""
-    
-    if intent.search_query:
+
+    # Date-filtered query (e.g. "tasks for today", "workouts this week")
+    date_prop = DB_DATE_PROPERTY.get(intent.database)
+    if intent.target_date and date_prop:
+        return await mcp.query_database(
+            database_name=intent.database,
+            filter={"property": date_prop, "date": {"equals": intent.target_date}},
+            page_size=20,
+        )
+    elif intent.search_query:
         return await mcp.search(query=intent.search_query, page_size=10)
     else:
         return await mcp.query_database(database_name=intent.database, page_size=10)

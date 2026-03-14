@@ -3,14 +3,19 @@ Async Google Calendar client.
 Wraps the sync Google API client in a thread executor.
 """
 import asyncio
+import logging
 import os
 import zoneinfo
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Optional
 
 from dotenv import load_dotenv
 
 load_dotenv()
+
+logger = logging.getLogger(__name__)
+
+TZ_NAME = os.getenv("TZ", "America/Los_Angeles")
 
 
 class GoogleCalendarClient:
@@ -28,8 +33,11 @@ class GoogleCalendarClient:
     async def __aenter__(self):
         if not self.is_configured:
             raise RuntimeError("Google Calendar env vars not set")
-        loop = asyncio.get_event_loop()
-        self._service = await loop.run_in_executor(None, self._build_service)
+        loop = asyncio.get_running_loop()
+        try:
+            self._service = await loop.run_in_executor(None, self._build_service)
+        except Exception as exc:
+            raise RuntimeError(f"Failed to connect to Google Calendar: {exc}") from exc
         return self
 
     async def __aexit__(self, *args):
@@ -50,18 +58,28 @@ class GoogleCalendarClient:
 
     def _fmt_time(self, iso_str: str) -> str:
         """Format ISO datetime string to local time like '1:00 PM'."""
-        tz = zoneinfo.ZoneInfo(os.getenv("TZ", "America/Los_Angeles"))
+        tz = zoneinfo.ZoneInfo(TZ_NAME)
         dt = datetime.fromisoformat(iso_str).astimezone(tz)
         return dt.strftime("%I:%M %p").lstrip("0")
 
+    def _list_calendar_ids(self) -> list[str]:
+        """Return IDs of all calendars the user has access to."""
+        result = self._service.calendarList().list().execute()
+        return [c["id"] for c in result.get("items", [])]
+
     async def get_current_and_next(self) -> dict:
         """Return the event happening right now and the next upcoming event today."""
-        tz = zoneinfo.ZoneInfo(os.getenv("TZ", "America/Los_Angeles"))
+        tz = zoneinfo.ZoneInfo(TZ_NAME)
         now = datetime.now(tz=tz)
+        # Look back 4 hours to catch events that started before now but are still running
+        window_start = now - timedelta(hours=4)
         end_of_day = datetime(now.year, now.month, now.day, 23, 59, 59, tzinfo=tz)
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
 
-        calendar_ids = await loop.run_in_executor(None, self._list_calendar_ids)
+        try:
+            calendar_ids = await loop.run_in_executor(None, self._list_calendar_ids)
+        except Exception as exc:
+            raise RuntimeError(f"Google Calendar auth failed: {exc}") from exc
 
         all_events = []
         for cal_id in calendar_ids:
@@ -70,11 +88,11 @@ class GoogleCalendarClient:
                 lambda cid=cal_id: self._service.events()
                 .list(
                     calendarId=cid,
-                    timeMin=now.isoformat(),
+                    timeMin=window_start.isoformat(),
                     timeMax=end_of_day.isoformat(),
                     singleEvents=True,
                     orderBy="startTime",
-                    maxResults=10,
+                    maxResults=20,
                 )
                 .execute(),
             )
@@ -89,7 +107,6 @@ class GoogleCalendarClient:
                     "end": self._fmt_time(e["end"]["dateTime"]),
                     "start_dt": start_dt,
                     "end_dt": end_dt,
-                    "id": e["id"],
                 })
 
         all_events.sort(key=lambda e: e["start_dt"])
@@ -104,23 +121,21 @@ class GoogleCalendarClient:
 
         return {"current": clean(current), "next": clean(upcoming)}
 
-    def _list_calendar_ids(self) -> list[str]:
-        """Return IDs of all calendars the user has access to."""
-        result = self._service.calendarList().list().execute()
-        return [c["id"] for c in result.get("items", [])]
-
     async def get_events(self, date_iso: Optional[str] = None) -> list[dict]:
         """Get events across all calendars for a given date (defaults to today)."""
         target = date_iso or date.today().isoformat()
-        tz = zoneinfo.ZoneInfo(os.getenv("TZ", "America/Los_Angeles"))
+        tz = zoneinfo.ZoneInfo(TZ_NAME)
         target_dt = date.fromisoformat(target)
         time_min = datetime(target_dt.year, target_dt.month, target_dt.day, 0, 0, 0, tzinfo=tz).isoformat()
         time_max = datetime(target_dt.year, target_dt.month, target_dt.day, 23, 59, 59, tzinfo=tz).isoformat()
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
 
-        calendar_ids = await loop.run_in_executor(None, self._list_calendar_ids)
+        try:
+            calendar_ids = await loop.run_in_executor(None, self._list_calendar_ids)
+        except Exception as exc:
+            raise RuntimeError(f"Google Calendar auth failed: {exc}") from exc
 
-        events = []
+        raw_events = []
         for cal_id in calendar_ids:
             result = await loop.run_in_executor(
                 None,
@@ -136,35 +151,40 @@ class GoogleCalendarClient:
                 .execute(),
             )
             for e in result.get("items", []):
-                is_all_day = "date" in e["start"] and "dateTime" not in e["start"]
-                events.append({
+                is_all_day = "dateTime" not in e["start"]
+                sort_key = e["start"].get("dateTime", e["start"].get("date", ""))
+                raw_events.append({
                     "summary": e.get("summary", "Untitled"),
                     "start": self._fmt_time(e["start"]["dateTime"]) if not is_all_day else "All day",
                     "end": self._fmt_time(e["end"]["dateTime"]) if not is_all_day else "",
-                    "start_iso": e["start"].get("dateTime", e["start"].get("date", "")),
                     "is_all_day": is_all_day,
-                    "id": e["id"],
+                    "sort_key": sort_key,
                 })
 
-        # Sort all events by start time, all-day first
-        events.sort(key=lambda e: (0 if e["is_all_day"] else 1, e["start_iso"]))
-        # Drop the sort key field
-        for e in events:
-            del e["start_iso"]
-        return events
+        # All-day events first, then timed events sorted by start
+        raw_events.sort(key=lambda e: (0 if e["is_all_day"] else 1, e["sort_key"]))
+        return [{k: v for k, v in e.items() if k != "sort_key"} for e in raw_events]
 
     async def create_event(
         self, summary: str, start: str, end: str, description: str = ""
     ) -> dict:
-        """Create a calendar event. start/end are ISO datetime strings."""
-        tz = os.getenv("TZ", "America/Los_Angeles")
+        """Create a calendar event. start/end are ISO datetime strings (naive or offset-aware)."""
+        tz_name = TZ_NAME
+        # Default end to start + 1 hour if identical or missing
+        if not end or end == start:
+            try:
+                start_dt = datetime.fromisoformat(start)
+                end = (start_dt + timedelta(hours=1)).isoformat()
+            except ValueError:
+                end = start
+
         body = {
             "summary": summary,
             "description": description,
-            "start": {"dateTime": start, "timeZone": tz},
-            "end": {"dateTime": end, "timeZone": tz},
+            "start": {"dateTime": start, "timeZone": tz_name},
+            "end": {"dateTime": end, "timeZone": tz_name},
         }
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         event = await loop.run_in_executor(
             None,
             lambda: self._service.events()

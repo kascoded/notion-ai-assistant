@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 MORNING_HOUR = int(os.getenv("MORNING_CHECKIN_HOUR", "8"))
 EVENING_HOUR = int(os.getenv("EVENING_CHECKIN_HOUR", "21"))
-TZ_NAME = os.getenv("TZ", "America/New_York")
+TZ_NAME = os.getenv("TZ", "America/Los_Angeles")
 
 MORNING_MSG = (
     "Good morning! What are you working on today?\n\n"
