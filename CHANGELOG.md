@@ -2,6 +2,60 @@
 
 All notable changes to the Notion AI Assistant project.
 
+## [0.4.0] - 2026-03-14
+
+### 🚀 Added
+
+- **`interfaces/scheduler.py`** — Proactive check-in scheduler:
+  - Morning brief (8am, configurable via `MORNING_CHECKIN_HOUR`) — includes today's Google Calendar events when configured
+  - Evening habit nudge (9pm, configurable via `EVENING_CHECKIN_HOUR`)
+  - Weekly review (Fridays at 5pm)
+  - Timezone-aware via `TZ` env var (defaults to `America/Los_Angeles`)
+- **`clients/google_calendar_client.py`** — Async Google Calendar client:
+  - Queries all user calendars (not just primary) and merges results
+  - `get_events(date_iso)` — fetch events for any date, sorted with all-day first
+  - `get_current_and_next()` — what's happening right now + next upcoming event
+  - `create_event(summary, start, end)` — create events with 1-hour default duration
+  - Timezone-correct using local `TZ` env var; uses `asyncio.get_running_loop()` for Python 3.13 safety
+  - Gracefully skipped when `GOOGLE_*` env vars are not set
+- **`ActionType.CALENDAR`** — New action type routing to Google Calendar instead of Notion
+  - Sub-actions: `query` (list events), `current` (now/next), `create` (new event)
+- **`scripts/google_auth.py`** — One-time OAuth setup script for getting Google refresh token
+- **Date-filtered queries** — `handle_search` now accepts `target_date` to query databases by date property:
+  - `project_management` → `Deadline`
+  - `workout_schedule` → `date`
+  - `meal_planning` → `date`
+  - `expense_tracker` → `Due Date`
+  - `blog_content` → `date`
+  - `zettelkasten` → `date`
+- **New Telegram commands**: `/refresh_controls`, `/refresh_schemas`, `/preview`, `/checkin`
+- **New AI controls in Notion**: Calendar Query Rules (priority 8), Project Management Query Rules (priority 7)
+- **New dependencies**: `google-auth`, `google-api-python-client`, `google-auth-oauthlib`
+
+### 🐛 Fixed
+
+- **Telegram formatting** — All bot responses converted from MarkdownV2 to HTML (`<b>`, `<code>` tags); fixes formatting errors across all commands
+- **Rate limit retry** — Added exponential backoff (`utils/retry.py`) for Notion 429 errors with `Retry-After` header support
+- **Outbound message logging** — All Telegram messages now logged with `user_id`, `msg_id`, `duration_ms`, and preview
+- **Cold start reliability** — MCP `post_init` failures no longer crash the bot at startup; error is caught and surfaced gracefully
+- **Controls initialization lock** — Fixed race condition where concurrent requests could double-initialize the controls loader
+- **Parse error handling** — LLM parsing failures now surface a real error message to the user instead of a silent fallback
+- **Habits routing** — Date-aware updates (resolves "yesterday", "last Monday" to ISO dates); correct DB name enforcement; habits no longer accidentally routed to other databases
+- **READ handler** — Now properly fetches and returns page content with section extraction; formatter returns Notion link
+- **Prompt injection protection** — Curly braces in AI control content are escaped before being injected into LangChain prompt templates
+- **Calendar routing** — Fixed `database` field default from `"calendar"` to `"zettelkasten"` so non-calendar intents are unaffected
+- **Calendar timezone** — Query windows use local timezone (not UTC midnight); fixes events appearing on wrong dates
+- **Calendar event loop** — `get_event_loop()` replaced with `get_running_loop()` (required for Python 3.13)
+- **Zero-duration events** — Calendar `create_event` defaults end time to start + 1 hour when not provided
+- **In-progress event detection** — `get_current_and_next()` looks back 4 hours to catch events already underway
+
+### ♻️ Changed
+
+- Calendar response format: shows day of week (`Saturday, March 14`), time range (`1:00 PM – 2:00 PM`), no date on each line
+- Calendar queries now pull from all user calendars (Miras Work, Miras Life, Birthdays, etc.) and merge results
+
+---
+
 ## [0.3.0] - 2026-01-24
 
 ### 🎯 Notion-Based AI Controls
@@ -228,6 +282,7 @@ notion-ai-assistant/
 
 | Version | Date | Highlight |
 |---------|------|-----------|
+| 0.4.0 | 2026-03-14 | Google Calendar integration, proactive scheduler, HTML formatting, rate-limit retry |
 | 0.3.0 | 2026-01-24 | Notion-based AI controls (no-code behavior editing) |
 | 0.2.0 | 2026-01-23 | Dynamic schema loading from MCP |
 | 0.1.0 | 2026-01-22 | Project modularization & proper packaging |

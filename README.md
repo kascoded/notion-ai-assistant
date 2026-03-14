@@ -2,7 +2,7 @@
 
 Natural language interface to your Notion workspace using LangGraph and FastMCP.
 
-> **v0.3.0** — Now with Notion-based AI controls. Edit your agent's behavior directly in Notion—no code changes needed.
+> **v0.4.0** — Now with Google Calendar integration and a proactive scheduler. Edit your agent's behavior directly in Notion—no code changes needed.
 
 ## Overview
 
@@ -20,6 +20,8 @@ User Input → AI Controls (from Notion) → LangGraph Agent → FastMCP → Not
 - 🎛️ **Notion-Based Controls** — Parsing rules live in Notion, editable without code
 - ⚡ **Multi-Transport Support** — STDIO (local), HTTP (cloud), SSE (legacy)
 - 📱 **Telegram Interface** — Mobile-friendly access from anywhere
+- 📅 **Google Calendar Integration** — Query events, check what's on now, and create events via natural language
+- ⏰ **Proactive Scheduler** — Morning brief, evening habit nudge, and weekly review via Telegram
 
 ## Architecture
 
@@ -67,12 +69,14 @@ notion-ai-assistant/
 ├── src/notion_assistant/
 │   ├── agent.py              # Main LangGraph agent & NotionAssistant class
 │   ├── clients/
-│   │   └── mcp_client.py     # FastMCP client (multi-transport)
+│   │   ├── mcp_client.py     # FastMCP client (multi-transport)
+│   │   └── google_calendar_client.py  # Async Google Calendar client
 │   ├── config/
 │   │   ├── schema_manager.py # Dynamic database schema loading
 │   │   └── controls_loader.py# AI controls from Notion
 │   ├── interfaces/
-│   │   └── telegram_bot.py   # Telegram bot interface
+│   │   ├── telegram_bot.py   # Telegram bot interface
+│   │   └── scheduler.py      # Proactive check-in scheduler
 │   ├── nodes/
 │   │   └── agent_nodes.py    # LangGraph node functions
 │   ├── parsers/
@@ -81,6 +85,8 @@ notion-ai-assistant/
 │   │   └── state.py          # Agent state definitions
 │   └── tools/
 │       └── action_handlers.py# Notion action implementations
+├── scripts/
+│   └── google_auth.py        # One-time OAuth setup for Google Calendar
 ├── run.py                    # CLI entry point
 ├── run_telegram.py           # Telegram bot entry point
 ├── pyproject.toml            # Dependencies & build config
@@ -264,6 +270,40 @@ uv run python run_telegram.py
 | `/databases` | List available databases |
 | `/status` | System status |
 | `/refresh` | Reload schemas and controls |
+| `/refresh_controls` | Reload AI controls from Notion |
+| `/refresh_schemas` | Reload database schemas |
+| `/preview` | Preview how input would be parsed |
+| `/checkin` | Trigger manual check-in |
+
+## Google Calendar Integration
+
+The assistant connects to Google Calendar for querying and creating events via natural language.
+
+### One-Time OAuth Setup
+
+```bash
+uv run python scripts/google_auth.py
+```
+
+This opens a browser for OAuth consent and writes a refresh token to your `.env`. You only run this once.
+
+### Example Queries
+
+```
+You: What's on my calendar today?
+You: What should I be doing right now?
+You: Do I have anything scheduled this Friday?
+You: Schedule standup for Friday at 3pm
+You: Add dentist appointment next Tuesday at 10am for 1 hour
+```
+
+### How It Works
+
+- Reads from all connected Google calendars (primary, work, shared, birthdays, etc.) and merges results
+- Returns events sorted with all-day events first, then by start time
+- "What's on now" looks back up to 4 hours to detect already-in-progress events
+- Calendar `create` defaults end time to start + 1 hour when not specified
+- If `GOOGLE_*` env vars are not set, all calendar features are silently skipped
 
 ## API Reference
 
@@ -369,6 +409,14 @@ async with NotionMCPClient(url="https://mcp.example.com", transport="http") as m
 | `NOTION_MCP_TOKEN` | If using auth | Bearer token for authenticated servers |
 | `TELEGRAM_BOT_TOKEN` | For Telegram | Bot token from @BotFather |
 | `TELEGRAM_ALLOWED_USERS` | For Telegram | Comma-separated user IDs |
+| `GOOGLE_CLIENT_ID` | Google Calendar | OAuth client ID |
+| `GOOGLE_CLIENT_SECRET` | Google Calendar | OAuth client secret |
+| `GOOGLE_REFRESH_TOKEN` | Google Calendar | Refresh token (from `scripts/google_auth.py`) |
+| `GOOGLE_CALENDAR_ID` | Google Calendar | Calendar ID (default: `primary`) |
+| `TELEGRAM_CHAT_ID` | For scheduler | Your chat ID for proactive messages |
+| `MORNING_CHECKIN_HOUR` | For scheduler | Hour for morning brief (default: `8`) |
+| `EVENING_CHECKIN_HOUR` | For scheduler | Hour for evening nudge (default: `21`) |
+| `TZ` | Timezone | IANA timezone name (default: `America/Los_Angeles`) |
 
 ### Model Configuration
 
@@ -459,6 +507,8 @@ asyncio.run(test())
 - [x] Dynamic schema loading
 - [x] Notion-based AI controls
 - [x] Telegram interface
+- [x] Google Calendar integration
+- [x] Proactive scheduled check-ins
 - [ ] Voice input support
 - [ ] Batch operations
 - [ ] Conversation memory
