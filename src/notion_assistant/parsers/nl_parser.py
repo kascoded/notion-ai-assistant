@@ -203,6 +203,8 @@ class NaturalLanguageParser:
             else:
                 # Fallback: include all controls
                 controls_section = self.controls_loader.format_routing_prompt()
+        # Escape braces so LangChain doesn't treat control content as template variables
+        controls_section = controls_section.replace("{", "{{").replace("}", "}}")
         
         system_message = f"""You are an expert parser for a personal productivity system connected to Notion.
 
