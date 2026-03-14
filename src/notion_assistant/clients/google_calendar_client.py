@@ -54,37 +54,53 @@ class GoogleCalendarClient:
         dt = datetime.fromisoformat(iso_str).astimezone(tz)
         return dt.strftime("%I:%M %p").lstrip("0")
 
+    def _list_calendar_ids(self) -> list[str]:
+        """Return IDs of all calendars the user has access to."""
+        result = self._service.calendarList().list().execute()
+        return [c["id"] for c in result.get("items", [])]
+
     async def get_events(self, date_iso: Optional[str] = None) -> list[dict]:
-        """Get events for a given date (defaults to today)."""
+        """Get events across all calendars for a given date (defaults to today)."""
         target = date_iso or date.today().isoformat()
         tz = zoneinfo.ZoneInfo(os.getenv("TZ", "America/Los_Angeles"))
         target_dt = date.fromisoformat(target)
         time_min = datetime(target_dt.year, target_dt.month, target_dt.day, 0, 0, 0, tzinfo=tz).isoformat()
         time_max = datetime(target_dt.year, target_dt.month, target_dt.day, 23, 59, 59, tzinfo=tz).isoformat()
         loop = asyncio.get_event_loop()
-        result = await loop.run_in_executor(
-            None,
-            lambda: self._service.events()
-            .list(
-                calendarId=self.calendar_id,
-                timeMin=time_min,
-                timeMax=time_max,
-                singleEvents=True,
-                orderBy="startTime",
-                maxResults=50,
-            )
-            .execute(),
-        )
+
+        calendar_ids = await loop.run_in_executor(None, self._list_calendar_ids)
+
         events = []
-        for e in result.get("items", []):
-            is_all_day = "date" in e["start"] and "dateTime" not in e["start"]
-            events.append({
-                "summary": e.get("summary", "Untitled"),
-                "start": self._fmt_time(e["start"]["dateTime"]) if not is_all_day else "All day",
-                "end": self._fmt_time(e["end"]["dateTime"]) if not is_all_day else "",
-                "is_all_day": is_all_day,
-                "id": e["id"],
-            })
+        for cal_id in calendar_ids:
+            result = await loop.run_in_executor(
+                None,
+                lambda cid=cal_id: self._service.events()
+                .list(
+                    calendarId=cid,
+                    timeMin=time_min,
+                    timeMax=time_max,
+                    singleEvents=True,
+                    orderBy="startTime",
+                    maxResults=50,
+                )
+                .execute(),
+            )
+            for e in result.get("items", []):
+                is_all_day = "date" in e["start"] and "dateTime" not in e["start"]
+                events.append({
+                    "summary": e.get("summary", "Untitled"),
+                    "start": self._fmt_time(e["start"]["dateTime"]) if not is_all_day else "All day",
+                    "end": self._fmt_time(e["end"]["dateTime"]) if not is_all_day else "",
+                    "start_iso": e["start"].get("dateTime", e["start"].get("date", "")),
+                    "is_all_day": is_all_day,
+                    "id": e["id"],
+                })
+
+        # Sort all events by start time, all-day first
+        events.sort(key=lambda e: (0 if e["is_all_day"] else 1, e["start_iso"]))
+        # Drop the sort key field
+        for e in events:
+            del e["start_iso"]
         return events
 
     async def create_event(
